@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     container: espressif/idf:release-v5.4
     
-    # Configure Git runtime parameters to ignore container owner conflicts
+    # Resolves Git ownership conflicts globally inside Docker container environments
     env:
       GIT_CONFIG_COUNT: 1
       GIT_CONFIG_KEY_0: safe.directory
@@ -35,7 +35,7 @@ jobs:
           mkdir -p build_out
           
           # Directly target ONLY the Smartwatch_OS directory
-          proj_dir="Smartwatch_OS"
+          proj_dir="ESP32-S3-Touch-AMOLED-2.06/Smartwatch_OS"
           proj_name="Smartwatch_OS"
           
           echo "=========================================="
@@ -130,6 +130,7 @@ jobs:
             echo "Error: Directory $proj_dir does not exist or is missing CMakeLists.txt!"
             exit 1
           fi
+
       - name: Upload ESP-IDF Compiled Binaries
         uses: actions/upload-artifact@v4
         with:
