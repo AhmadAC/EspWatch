@@ -1,0 +1,19 @@
+{
+  "files": [
+    "actions.h",
+    "fonts.h",
+    "images.c",
+    "images.h",
+    "screens.c",
+    "screens.h",
+    "structs.h",
+    "styles.c",
+    "styles.h",
+    "ui.c",
+    "ui.h",
+    "ui_font_test.c",
+    "ui_image_icon_clock.c",
+    "ui_image_icon_gear.c",
+    "vars.h"
+  ]
+}

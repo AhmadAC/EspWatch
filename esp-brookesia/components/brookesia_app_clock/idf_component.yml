@@ -1,0 +1,4 @@
+# File: examples/ESP-IDF-v5.4.2/03_esp-brookesia/components/brookesia_app_clock/idf_component.yml
+dependencies:
+  espressif/brookesia_core: "0.6.0-beta2"
+  lvgl/lvgl: "9.2.*"

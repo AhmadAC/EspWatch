@@ -1,0 +1,5 @@
+# File: examples/ESP-IDF-v5.4.2/Smartwatch_OS/main/idf_component.yml
+dependencies:
+  espressif/esp_lvgl_port: "^2.0.0"
+  lvgl/lvgl: "^9.1.0"
+  waveshare/esp32_s3_touch_amoled_2_06: "*"

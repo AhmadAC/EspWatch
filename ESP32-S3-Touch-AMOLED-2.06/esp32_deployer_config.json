@@ -1,0 +1,17 @@
+{
+    "root_folder": "C:/Users/Cooper/Documents/1.0 CooperShared/2026/zero01Studio.pyCar.Resource.2025-6-25/pycar - ns",
+    "boot": "",
+    "main": "",
+    "lib": "",
+    "firmware_mode": "single",
+    "firmware": "",
+    "cpp_build_dir": "",
+    "env": "micropython",
+    "preserve_names": false,
+    "hardware_preset": "Custom Settings",
+    "flash_address": "0x1000",
+    "flash_mode": "dio",
+    "flash_size": "detect",
+    "flash_freq": "keep",
+    "flash_baud": "921600"
+}

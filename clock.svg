@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+  <!-- Outer Clock Frame and Background -->
+  <circle cx="100" cy="100" r="85" fill="#f8fafc" stroke="#334155" stroke-width="10"/>
+
+  <!-- Subtle 5-minute Ticks (All 12 hours) -->
+  <g stroke="#94a3b8" stroke-width="4" stroke-linecap="round">
+    <line x1="100" y1="25" x2="100" y2="35" transform="rotate(30 100 100)"/>
+    <line x1="100" y1="25" x2="100" y2="35" transform="rotate(60 100 100)"/>
+    <line x1="100" y1="25" x2="100" y2="35" transform="rotate(120 100 100)"/>
+    <line x1="100" y1="25" x2="100" y2="35" transform="rotate(150 100 100)"/>
+    <line x1="100" y1="25" x2="100" y2="35" transform="rotate(210 100 100)"/>
+    <line x1="100" y1="25" x2="100" y2="35" transform="rotate(240 100 100)"/>
+    <line x1="100" y1="25" x2="100" y2="35" transform="rotate(300 100 100)"/>
+    <line x1="100" y1="25" x2="100" y2="35" transform="rotate(330 100 100)"/>
+  </g>
+
+  <!-- Bolder Ticks for 12, 3, 6, and 9 -->
+  <g stroke="#334155" stroke-width="6" stroke-linecap="round">
+    <line x1="100" y1="22" x2="100" y2="38"/>
+    <line x1="100" y1="22" x2="100" y2="38" transform="rotate(90 100 100)"/>
+    <line x1="100" y1="22" x2="100" y2="38" transform="rotate(180 100 100)"/>
+    <line x1="100" y1="22" x2="100" y2="38" transform="rotate(270 100 100)"/>
+  </g>
+
+  <!-- Hour Hand (Accurately slightly past 10 o'clock: 305 degrees) -->
+  <line x1="100" y1="100" x2="100" y2="60" stroke="#334155" stroke-width="8" stroke-linecap="round" transform="rotate(305 100 100)"/>
+  
+  <!-- Minute Hand (Points to 10 past: 60 degrees) -->
+  <line x1="100" y1="100" x2="100" y2="40" stroke="#334155" stroke-width="6" stroke-linecap="round" transform="rotate(60 100 100)"/>
+
+  <!-- Second Hand with a counterweight tail (Points to 33 seconds: 198 degrees) -->
+  <line x1="100" y1="115" x2="100" y2="35" stroke="#ef4444" stroke-width="3" stroke-linecap="round" transform="rotate(198 100 100)"/>
+
+  <!-- Center Pin / Dot -->
+  <circle cx="100" cy="100" r="6" fill="#ef4444"/>
+  <circle cx="100" cy="100" r="2" fill="#ffffff"/>
+</svg>

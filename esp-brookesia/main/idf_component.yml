@@ -1,0 +1,5 @@
+# File: examples/ESP-IDF-v5.4.2/03_esp-brookesia/main/idf_component.yml
+dependencies:
+  espressif/brookesia_core: "0.6.0-beta2"
+  waveshare/esp32_s3_touch_amoled_2_06: "^1.0.6"
+  lvgl/lvgl: "9.2.*"
