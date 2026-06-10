@@ -60,11 +60,79 @@ bool axp2101_init_pmu(i2c_master_bus_handle_t bus) {
         return false;
     }
 
-    // Force-enable ALL AXP2101 ADCs to run (Register 0x30 set to 0x3F enables VBAT, VBUS, VSYS and current ADCs)
-    if (axp_read(0x30, &reg_val)) {
-        axp_write(0x30, reg_val | 0x3F); // 0x3F enables Bit 1 (VBAT_ADC_EN) so we can read real battery voltage
+    // Apply configuration parameters sourced from XPowersLib
+    
+    // Disable unused power channels (DC2, DC3, DC4, DC5)
+    if (axp_read(0x80, &reg_val)) {
+        reg_val &= ~(0x1E); 
+        axp_write(0x80, reg_val);
     }
-    axp_write(0x40, 0x03);
+    
+    // Disable ALDO1-4, BLDO1-2, CPUSLDO, DLDO1
+    axp_write(0x90, 0x00);
+    // Disable DLDO2
+    if (axp_read(0x91, &reg_val)) {
+        reg_val &= ~(0x01);
+        axp_write(0x91, reg_val);
+    }
+
+    // Set DC1 Voltage to 3300mV and enable it
+    if (axp_read(0x82, &reg_val)) {
+        axp_write(0x82, (reg_val & 0xE0) | 0x12); // (3300-1500)/100 = 18 = 0x12
+    }
+    if (axp_read(0x80, &reg_val)) {
+        axp_write(0x80, reg_val | 0x01);
+    }
+
+    // Set ALDO1 Voltage to 3300mV and enable it
+    if (axp_read(0x92, &reg_val)) {
+        axp_write(0x92, (reg_val & 0xE0) | 0x1C); // (3300-500)/100 = 28 = 0x1C
+    }
+    if (axp_read(0x90, &reg_val)) {
+        axp_write(0x90, reg_val | 0x01);
+    }
+
+    // Enable ADCs (VBUS, BATT, SYS, TEMP) but disable TS pin
+    if (axp_read(0x30, &reg_val)) {
+        reg_val |= (1 << 2) | (1 << 0) | (1 << 3) | (1 << 4);
+        reg_val &= ~(1 << 1); // Disable TS pin
+        axp_write(0x30, reg_val);
+    }
+
+    // Disable all IRQs
+    axp_write(0x40, 0x00);
+    axp_write(0x41, 0x00);
+    axp_write(0x42, 0x00);
+
+    // Clear IRQ Status
+    axp_write(0x48, 0xFF);
+    axp_write(0x49, 0xFF);
+    axp_write(0x4A, 0xFF);
+
+    // Enable specific IRQs: BAT_INSERT, BAT_REMOVE, VBUS_INSERT, VBUS_REMOVE, PKEY_SHORT, PKEY_LONG, BAT_CHG_DONE, BAT_CHG_START
+    axp_write(0x41, (1 << 5) | (1 << 4) | (1 << 7) | (1 << 6) | (1 << 3) | (1 << 2));
+    axp_write(0x42, (1 << 4) | (1 << 3));
+
+    // Set precharge current to 50mA
+    if (axp_read(0x61, &reg_val)) {
+        axp_write(0x61, (reg_val & 0xFC) | 0x02);
+    }
+
+    // Set constant charge current to 400mA
+    if (axp_read(0x62, &reg_val)) {
+        axp_write(0x62, (reg_val & 0xE0) | 0x07);
+    }
+
+    // Set termination current to 25mA
+    if (axp_read(0x63, &reg_val)) {
+        axp_write(0x63, (reg_val & 0xF0) | 0x01);
+    }
+
+    // Set charge target voltage to 4.2V
+    if (axp_read(0x64, &reg_val)) {
+        axp_write(0x64, (reg_val & 0xFC) | 0x02);
+    }
+
     return true;
 }
 
@@ -73,8 +141,8 @@ float axp2101_get_voltage(void) {
     if (!axp_read(0x34, &hi)) return 0.0f; // AXP2101_REG_VBAT_H
     if (!axp_read(0x35, &lo)) return 0.0f; // AXP2101_REG_VBAT_L
     
-    // AXP2101 ADC is 14-bit: High 8 bits in 0x34, Low 6 bits in 0x35
-    uint16_t raw = (hi << 6) | (lo & 0x3F);
+    // AXP2101 ADC is 13-bit for Battery Voltage: High 5 bits in 0x34, Low 8 bits in 0x35
+    uint16_t raw = ((hi & 0x1F) << 8) | lo;
     
     // 1 LSB = 1 mV
     return raw / 1000.0f;
@@ -97,14 +165,28 @@ bool axp2101_is_charging(void) {
 }
 
 bool axp2101_check_short_press(void) {
-    uint8_t irq_status = 0;
-    if (axp_read(0x48, &irq_status)) {
-        if (irq_status & 0x02) { // Short press detected
-            axp_write(0x48, 0x02); // Clear interrupt
-            return true;
-        }
+    uint8_t irq_status1 = 0;
+    uint8_t irq_status2 = 0;
+    uint8_t irq_status3 = 0;
+    bool pressed = false;
+
+    // AXP2101 groups interrupts into 3 registers. We read & drain them so they don't pile up.
+    if (axp_read(0x48, &irq_status1) && irq_status1 != 0) {
+        axp_write(0x48, irq_status1);
     }
-    return false;
+    
+    if (axp_read(0x49, &irq_status2) && irq_status2 != 0) {
+        if (irq_status2 & 0x08) { // Bit 3 is Short press
+            pressed = true;
+        }
+        axp_write(0x49, irq_status2);
+    }
+    
+    if (axp_read(0x4A, &irq_status3) && irq_status3 != 0) {
+        axp_write(0x4A, irq_status3);
+    }
+
+    return pressed;
 }
 
 uint8_t axp2101_get_internal_percentage(void) {
