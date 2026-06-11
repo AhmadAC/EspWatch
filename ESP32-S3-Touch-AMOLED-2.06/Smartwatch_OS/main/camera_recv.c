@@ -1,4 +1,5 @@
 #include "camera_recv.h"
+#include "wifi_app.h"
 #include "esp_wifi.h"
 #include "esp_now.h"
 #include "esp_log.h"
@@ -174,6 +175,11 @@ static void esp_now_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t 
 }
 
 void start_camera_stream(void) {
+    if (!is_wifi_initialized()) {
+        ESP_LOGE(TAG, "Cannot start camera: Wi-Fi stack not initialized yet!");
+        return;
+    }
+
     ESP_LOGI(TAG, "Starting camera stream...");
     camera_connected = false;
     new_frame_ready = false;

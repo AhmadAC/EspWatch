@@ -62,6 +62,11 @@ void action_open_settings(lv_event_t * e) {
 }
 
 void action_camera(lv_event_t * e) {
+    if (!is_wifi_initialized()) {
+        ESP_LOGW("UI", "Camera cannot be launched: Wi-Fi stack is still initializing.");
+        return;
+    }
+    
     lv_obj_set_tile(tv, tile_camera, LV_ANIM_ON);
     
     // Hide video canvas and show loading text
@@ -157,11 +162,19 @@ static void update_wifi_toggle_button_ui(void) {
 }
 
 static void btn_wifi_toggle_cb(lv_event_t * e) {
+    if (!is_wifi_initialized()) {
+        ESP_LOGW("UI", "Wi-Fi not initialized yet.");
+        return;
+    }
     toggle_wifi();
     update_wifi_toggle_button_ui();
 }
 
 static void btn_ap_mode_cb(lv_event_t * e) {
+    if (!is_wifi_initialized()) {
+        ESP_LOGW("UI", "Wi-Fi not initialized yet.");
+        return;
+    }
     start_ap_mode_task();
     lv_obj_t * ap_overlay = lv_obj_create(lv_screen_active());
     lv_obj_remove_style_all(ap_overlay);
@@ -271,7 +284,8 @@ static void hardware_poll_timer_cb(lv_timer_t * timer) {
                 .len = latest_frame_len,
                 .offset = 0,
                 .out_buf = (uint16_t *)canvas_buffer,
-                .out_width = CAM_WIDTH
+                .out_width = CAM_WIDTH,
+                .out_height = CAM_HEIGHT
             };
             
             uint8_t *work_buf = malloc(3100);

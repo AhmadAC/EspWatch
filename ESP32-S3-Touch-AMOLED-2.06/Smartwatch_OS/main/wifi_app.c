@@ -21,6 +21,7 @@ static const char *TAG = "WiFi_App";
 
 static bool s_is_ap_mode = false;
 static bool s_is_connected = false;
+static bool s_wifi_initialized = false;
 static bool s_wifi_enabled = true; // Tracks driver level state
 static int s_reboot_timer = -1;
 static httpd_handle_t server = NULL;
@@ -33,6 +34,10 @@ static httpd_handle_t server = NULL;
 bool get_wifi_connected_status(void) { return s_is_connected; }
 int get_reboot_timer(void) { return s_reboot_timer; }
 void decrement_reboot_timer(void) { if (s_reboot_timer > 0) s_reboot_timer--; }
+
+bool is_wifi_initialized(void) {
+    return s_wifi_initialized;
+}
 
 /* ==========================================
  * NVS STORAGE
@@ -261,6 +266,7 @@ void init_wifi(void) {
     esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, NULL);
     esp_wifi_set_mode(WIFI_MODE_STA);
     esp_wifi_start();
+    s_wifi_initialized = true;
 }
 
 static void ap_task_runner(void *arg) {
