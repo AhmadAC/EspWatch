@@ -427,7 +427,7 @@ void build_ui(void) {
     lv_obj_center(lbl_back_settings);
     lv_obj_add_event_cb(btn_back_settings, btn_back_settings_cb, LV_EVENT_CLICKED, NULL);
 
-    // --- CAMERA TILE ---
+    // --- CAMERA TILE (using direct, fast-updating lv_canvas) ---
     canvas = lv_canvas_create(tile_camera);
     if (canvas_buffer == NULL) {
         canvas_buffer = heap_caps_malloc(CAM_WIDTH * CAM_HEIGHT * 2, MALLOC_CAP_SPIRAM);

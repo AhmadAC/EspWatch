@@ -135,14 +135,31 @@ static void wifi_promiscuous_rx_cb(void *buf, wifi_promiscuous_pkt_type_t type) 
 }
 
 static void esp_now_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len) {
-    // Explicit safety checks prevent core panics on floating packet entries
-    if (recv_info == NULL || recv_info->src_addr == NULL || data == NULL || len <= 0) {
+    if (recv_info == NULL) return;
+    
+    // Robust, crash-proof MAC address extraction
+    uintptr_t addr = (uintptr_t)recv_info;
+    const uint8_t *src_mac = NULL;
+    
+    // On ESP32-S3, valid memory space (SRAM/SROM/PSRAM) is 0x3C000000 - 0x3FFFFFFF.
+    // If recv_info is a pointer to the old-style raw 6-byte MAC array, its dereferenced
+    // first 4 bytes (treated as src_addr) will be an invalid out-of-bounds pointer.
+    if (addr >= 0x3C000000 && addr <= 0x3FFFFFFF) {
+        uintptr_t src_ptr = (uintptr_t)recv_info->src_addr;
+        if (src_ptr >= 0x3C000000 && src_ptr <= 0x3FFFFFFF) {
+            src_mac = recv_info->src_addr;
+        } else {
+            src_mac = (const uint8_t *)recv_info; // It's actually the raw MAC address array itself!
+        }
+    } else {
         return;
     }
 
+    if (data == NULL || len <= 0) return;
+
     if (len >= 9 && strncmp((const char*)data, "pyCAM_ACK", 9) == 0) {
         ESP_LOGI(TAG, "Seeed Studio Camera acknowledged our connection!");
-        memcpy(camera_mac, recv_info->src_addr, 6);
+        memcpy(camera_mac, src_mac, 6);
         camera_connected = true;
 
         esp_now_peer_info_t peer_info = {0};
