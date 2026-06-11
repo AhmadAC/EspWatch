@@ -18,7 +18,9 @@
 #include <sys/time.h>
 
 // Include the EEZ UI header from the my_eez_ui component
-#include "ui.h"
+// Fixed to relative path to overcome CMake configuration boundaries
+#include "../apps/my_eez_ui/ui.h"
+#include "../apps/my_eez_ui/screens.h"
 
 #define LCD_H_RES 410
 #define LCD_V_RES 502
