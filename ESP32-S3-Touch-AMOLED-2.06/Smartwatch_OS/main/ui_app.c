@@ -299,9 +299,12 @@ static void camera_decode_task(void *arg) {
             };
             
             if (work_buf) {
+                // Decode on the asynchronous RTOS thread so the LVGL thread doesn't hang!
                 if (jd_prepare(&jd, jpg_input_func, work_buf, 3100, &dec) == JDR_OK) {
-                    jd_decomp(&jd, jpg_output_func, 0);
-                    if (bsp_display_lock(50)) {
+                    jd_decomp(&jd, jpg_output_func, 0); 
+                    
+                    // Attempt non-blocking lock to invalidate cleanly for hardware rendering
+                    if (bsp_display_lock(0)) {
                         lv_obj_invalidate(canvas);
                         bsp_display_unlock();
                     }
@@ -456,7 +459,10 @@ void build_ui(void) {
         canvas_buffer = heap_caps_malloc(CAM_WIDTH * CAM_HEIGHT * 2, MALLOC_CAP_SPIRAM);
     }
     lv_canvas_set_buffer(canvas, canvas_buffer, CAM_WIDTH, CAM_HEIGHT, LV_COLOR_FORMAT_RGB565);
-    lv_obj_align(canvas, LV_ALIGN_CENTER, 0, -40);
+    
+    // Scale uniformly by 2.09x (256 * 2.09 = 536) to perfectly fill the watch's vertical bounds (502 pixels tall)
+    lv_image_set_scale(canvas, 536); 
+    lv_obj_center(canvas); // Centering it safely crops the un-needed width off the screen edges
 
     lv_obj_t * btn_capture = lv_button_create(tile_camera);
     lv_obj_set_size(btn_capture, 120, 50);
@@ -490,6 +496,11 @@ void build_ui(void) {
     }
 
     lv_obj_set_tile(tv, tile_launcher, LV_ANIM_OFF);
-    xTaskCreate(camera_decode_task, "cam_decode", 8192, NULL, 5, &cam_decode_task_handle);
+    
+    // Spawn asynchronous decoder
+    if (cam_decode_task_handle == NULL) {
+        xTaskCreate(camera_decode_task, "cam_decode", 8192, NULL, 5, &cam_decode_task_handle);
+    }
+    
     lv_timer_create(hardware_poll_timer_cb, 50, NULL);
 }

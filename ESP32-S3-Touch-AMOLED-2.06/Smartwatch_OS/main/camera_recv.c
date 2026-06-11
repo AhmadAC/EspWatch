@@ -74,8 +74,9 @@ unsigned int jpg_output_func(JDEC *jd, void *bitmap, JRECT *rect) {
 
 static void handle_incoming_chunk(uint16_t idx, uint16_t total, uint16_t len, uint8_t *data) {
     if (!frame_reassembly_buf) {
+        // Boosted safety buffer to 256KB to accept very high-res snapshot chunks without crash
         frame_reassembly_buf = heap_caps_malloc(256 * 1024, MALLOC_CAP_SPIRAM);
-        received_chunks_map = calloc(1024, sizeof(bool)); // Increased to 1024 to prevent out-of-bounds corruption
+        received_chunks_map = calloc(1024, sizeof(bool)); 
         latest_frame_buffer = heap_caps_malloc(256 * 1024, MALLOC_CAP_SPIRAM);
         canvas_buffer = heap_caps_malloc(CAM_WIDTH * CAM_HEIGHT * 2, MALLOC_CAP_SPIRAM);
         if (canvas_buffer) {
