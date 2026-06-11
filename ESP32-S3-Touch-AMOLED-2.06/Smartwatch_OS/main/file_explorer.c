@@ -27,6 +27,40 @@ static void refresh_directory_list(const char *path);
 static void file_click_cb(lv_event_t *e);
 
 /*
+ * I2C Read/Write Registers for ES8311
+ */
+static bool es8311_write_reg(uint8_t reg, uint8_t val) {
+    i2c_master_dev_handle_t codec_handle = NULL;
+    i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = 0x18, // ES8311
+        .scl_speed_hz = 100000,
+    };
+    if (i2c_master_bus_add_device(bsp_i2c_get_handle(), &dev_cfg, &codec_handle) == ESP_OK) {
+        uint8_t data[2] = { reg, val };
+        esp_err_t err = i2c_master_transmit(codec_handle, data, 2, -1);
+        i2c_master_bus_rm_device(codec_handle);
+        return err == ESP_OK;
+    }
+    return false;
+}
+
+static bool es8311_read_reg(uint8_t reg, uint8_t *val) {
+    i2c_master_dev_handle_t codec_handle = NULL;
+    i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = 0x18, // ES8311
+        .scl_speed_hz = 100000,
+    };
+    if (i2c_master_bus_add_device(bsp_i2c_get_handle(), &dev_cfg, &codec_handle) == ESP_OK) {
+        esp_err_t err = i2c_master_transmit_receive(codec_handle, &reg, 1, val, 1, -1);
+        i2c_master_bus_rm_device(codec_handle);
+        return err == ESP_OK;
+    }
+    return false;
+}
+
+/*
  * Official ES8311 Clock Coefficient Structure and Table
  */
 struct _coeff_div {
