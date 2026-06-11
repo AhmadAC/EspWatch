@@ -25,7 +25,7 @@ typedef struct {
     uint32_t out_width;
 } jpeg_decode_t;
 
-uint32_t jpg_input_func(JDEC *jd, uint8_t *buf, uint32_t num);
-int jpg_output_func(JDEC *jd, void *bitmap, JRECT *rect);
+unsigned int jpg_input_func(JDEC *jd, uint8_t *buf, unsigned int num);
+unsigned int jpg_output_func(JDEC *jd, void *bitmap, JRECT *rect);
 
 #endif // CAMERA_RECV_H

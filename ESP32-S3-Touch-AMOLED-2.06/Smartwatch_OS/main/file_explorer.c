@@ -109,7 +109,8 @@ bool mount_sd_card(void) {
         .max_transfer_sz = 4000,
     };
 
-    esp_err_t ret = spi_bus_initialize(host.slot, &bus_cfg, SDSPI_DEFAULT_DMA_CHAN);
+    // Corrected DMA flag to SPI_DMA_CH_AUTO
+    esp_err_t ret = spi_bus_initialize(host.slot, &bus_cfg, SPI_DMA_CH_AUTO);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize SPI bus.");
         return false;

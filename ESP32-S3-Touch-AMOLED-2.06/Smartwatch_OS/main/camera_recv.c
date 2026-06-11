@@ -5,6 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
+#include <sys/time.h> // Fixed missing gettimeofday and struct timeval
 
 static const char *TAG = "CAMERA_RECV";
 
@@ -23,7 +24,8 @@ static bool camera_connected = false;
 static uint8_t watch_mac[6] = {0};
 static const uint8_t broadcast_mac[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
-uint32_t jpg_input_func(JDEC *jd, uint8_t *buf, uint32_t num) {
+// Fixed strict pointer typing to match JDEC
+unsigned int jpg_input_func(JDEC *jd, uint8_t *buf, unsigned int num) {
     jpeg_decode_t *dec = (jpeg_decode_t *)jd->device;
     if (dec->offset + num > dec->len) {
         num = dec->len - dec->offset;
@@ -35,7 +37,8 @@ uint32_t jpg_input_func(JDEC *jd, uint8_t *buf, uint32_t num) {
     return num;
 }
 
-int jpg_output_func(JDEC *jd, void *bitmap, JRECT *rect) {
+// Fixed strict pointer typing to match JDEC
+unsigned int jpg_output_func(JDEC *jd, void *bitmap, JRECT *rect) {
     jpeg_decode_t *dec = (jpeg_decode_t *)jd->device;
     uint16_t *out = dec->out_buf;
     uint16_t *in = (uint16_t *)bitmap;
