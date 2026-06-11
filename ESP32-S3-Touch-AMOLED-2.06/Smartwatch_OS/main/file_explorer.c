@@ -26,38 +26,47 @@ static char current_dir[256] = "/sdcard";
 static void refresh_directory_list(const char *path);
 static void file_click_cb(lv_event_t *e);
 
+static i2c_master_dev_handle_t es8311_handle = NULL;
+
 /*
- * I2C Read/Write Registers for ES8311
+ * Persistent I2C device acquisition for ES8311
  */
-static bool es8311_write_reg(uint8_t reg, uint8_t val) {
-    i2c_master_dev_handle_t codec_handle = NULL;
+static bool init_es8311_device(void) {
+    if (es8311_handle != NULL) return true;
+    
+    i2c_master_bus_handle_t bus = bsp_i2c_get_handle();
+    if (bus == NULL) {
+        bsp_i2c_init();
+        bus = bsp_i2c_get_handle();
+    }
+    if (bus == NULL) {
+        ESP_LOGE(TAG, "Failed to get I2C master bus handle");
+        return false;
+    }
+
     i2c_device_config_t dev_cfg = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = 0x18, // ES8311
+        .device_address = 0x18, // ES8311 I2C address
         .scl_speed_hz = 100000,
     };
-    if (i2c_master_bus_add_device(bsp_i2c_get_handle(), &dev_cfg, &codec_handle) == ESP_OK) {
-        uint8_t data[2] = { reg, val };
-        esp_err_t err = i2c_master_transmit(codec_handle, data, 2, -1);
-        i2c_master_bus_rm_device(codec_handle);
-        return err == ESP_OK;
+
+    if (i2c_master_bus_add_device(bus, &dev_cfg, &es8311_handle) == ESP_OK) {
+        ESP_LOGI(TAG, "ES8311 I2C device added successfully");
+        return true;
     }
+    ESP_LOGE(TAG, "Failed to add ES8311 I2C device");
     return false;
 }
 
+static bool es8311_write_reg(uint8_t reg, uint8_t val) {
+    if (!init_es8311_device()) return false;
+    uint8_t data[2] = { reg, val };
+    return i2c_master_transmit(es8311_handle, data, 2, -1) == ESP_OK;
+}
+
 static bool es8311_read_reg(uint8_t reg, uint8_t *val) {
-    i2c_master_dev_handle_t codec_handle = NULL;
-    i2c_device_config_t dev_cfg = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = 0x18, // ES8311
-        .scl_speed_hz = 100000,
-    };
-    if (i2c_master_bus_add_device(bsp_i2c_get_handle(), &dev_cfg, &codec_handle) == ESP_OK) {
-        esp_err_t err = i2c_master_transmit_receive(codec_handle, &reg, 1, val, 1, -1);
-        i2c_master_bus_rm_device(codec_handle);
-        return err == ESP_OK;
-    }
-    return false;
+    if (!init_es8311_device()) return false;
+    return i2c_master_transmit_receive(es8311_handle, &reg, 1, val, 1, -1) == ESP_OK;
 }
 
 /*
@@ -482,6 +491,108 @@ static void close_img_viewer_cb(lv_event_t *e) {
     }
 }
 
+static void view_mjpeg_file(const char *filepath) {
+    FILE *f = fopen(filepath, "rb");
+    if (!f) return;
+
+    img_viewer = lv_obj_create(explorer_container);
+    lv_obj_set_size(img_viewer, 410, 502);
+    lv_obj_set_style_bg_color(img_viewer, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(img_viewer, LV_OPA_COVER, 0);
+    lv_obj_center(img_viewer);
+    lv_obj_move_foreground(img_viewer);
+
+    lv_obj_t *canvas_img = lv_canvas_create(img_viewer);
+    uint8_t *mjpeg_canvas_buf = heap_caps_malloc(CAM_WIDTH * CAM_HEIGHT * 2, MALLOC_CAP_SPIRAM);
+    if (!mjpeg_canvas_buf) {
+        fclose(f);
+        lv_obj_delete(img_viewer);
+        img_viewer = NULL;
+        return;
+    }
+    memset(mjpeg_canvas_buf, 0, CAM_WIDTH * CAM_HEIGHT * 2);
+    lv_canvas_set_buffer(canvas_img, mjpeg_canvas_buf, CAM_WIDTH, CAM_HEIGHT, LV_COLOR_FORMAT_RGB565);
+    lv_obj_center(canvas_img);
+
+    // Register cleanup callback on deletion
+    lv_obj_add_event_cb(img_viewer, btn_delete_cb, LV_EVENT_DELETE, (void*)mjpeg_canvas_buf);
+
+    lv_obj_t *btn_close = lv_button_create(img_viewer);
+    lv_obj_set_size(btn_close, 100, 40);
+    lv_obj_align(btn_close, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_obj_t *lbl_close = lv_label_create(btn_close);
+    lv_label_set_text(lbl_close, "Close");
+    lv_obj_center(lbl_close);
+    lv_obj_add_event_cb(btn_close, close_img_viewer_cb, LV_EVENT_CLICKED, NULL);
+
+    // Read and play frame loop
+    size_t temp_buf_size = 64 * 1024;
+    uint8_t *frame_buf = malloc(temp_buf_size);
+    uint8_t *work_buf = malloc(3100);
+
+    if (frame_buf && work_buf) {
+        while (img_viewer != NULL) {
+            // Find SOI marker (0xFFD8)
+            int c;
+            while ((c = fgetc(f)) != EOF) {
+                if (c == 0xFF) {
+                    int next = fgetc(f);
+                    if (next == 0xD8) {
+                        break;
+                    }
+                }
+            }
+            if (feof(f)) break;
+
+            // Collect bytes until EOI marker (0xFFD9)
+            uint32_t frame_len = 2;
+            frame_buf[0] = 0xFF;
+            frame_buf[1] = 0xD8;
+
+            bool found_eoi = false;
+            while (frame_len < temp_buf_size - 1) {
+                int byte = fgetc(f);
+                if (byte == EOF) break;
+                frame_buf[frame_len++] = byte;
+                if (byte == 0xD9 && frame_buf[frame_len - 2] == 0xFF) {
+                    found_eoi = true;
+                    break;
+                }
+            }
+
+            if (found_eoi && img_viewer != NULL) {
+                JDEC jd;
+                jpeg_decode_t dec = {
+                    .data = frame_buf,
+                    .len = frame_len,
+                    .offset = 0,
+                    .out_buf = (uint16_t *)mjpeg_canvas_buf,
+                    .out_width = CAM_WIDTH,
+                    .out_height = CAM_HEIGHT
+                };
+
+                if (bsp_display_lock(50)) {
+                    if (jd_prepare(&jd, jpg_input_func, work_buf, 3100, &dec) == JDR_OK) {
+                        jd_decomp(&jd, jpg_output_func, 0);
+                        lv_obj_invalidate(canvas_img);
+                    }
+                    bsp_display_unlock();
+                }
+                
+                // Cap playback speed to ~20 FPS (50ms delay) to keep UI responsive
+                vTaskDelay(pdMS_TO_TICKS(50));
+            }
+            
+            // Allow other watch tasks to run
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+    }
+
+    free(frame_buf);
+    free(work_buf);
+    fclose(f);
+}
+
 static void view_image_file(const char *filepath) {
     FILE *f = fopen(filepath, "rb");
     if (!f) return;
@@ -510,7 +621,7 @@ static void view_image_file(const char *filepath) {
 
     const char *ext = strrchr(filepath, '.');
     bool is_png = (ext && strcasecmp(ext, ".png") == 0);
-    bool is_jpg = (ext && (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0 || strcasecmp(ext, ".mjp") == 0 || strcasecmp(ext, ".mjpeg") == 0));
+    bool is_jpg = (ext && (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0));
 
     if (is_png || is_jpg) {
         // Safe allocation using calloc to prevent unitialized memory garbage/crashes in LVGL 9
@@ -572,8 +683,9 @@ static void file_click_cb(lv_event_t *e) {
                     view_text_file(path);
                 } else if (strcasecmp(ext, ".wav") == 0) {
                     play_wav_file(path);
+                } else if (strcasecmp(ext, ".mjp") == 0 || strcasecmp(ext, ".mjpeg") == 0) {
+                    view_mjpeg_file(path);
                 } else if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0 ||
-                           strcasecmp(ext, ".mjp") == 0 || strcasecmp(ext, ".mjpeg") == 0 ||
                            strcasecmp(ext, ".png") == 0) {
                     view_image_file(path);
                 }

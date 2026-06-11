@@ -1,5 +1,6 @@
 #include "camera_recv.h"
 #include "wifi_app.h"
+#include "file_explorer.h"
 #include "esp_wifi.h"
 #include "esp_now.h"
 #include "esp_log.h"
@@ -76,6 +77,9 @@ static void handle_incoming_chunk(uint16_t idx, uint16_t total, uint16_t len, ui
         received_chunks_map = calloc(1024, sizeof(bool)); // Increased to 1024 to prevent out-of-bounds corruption
         latest_frame_buffer = heap_caps_malloc(128 * 1024, MALLOC_CAP_SPIRAM);
         canvas_buffer = heap_caps_malloc(CAM_WIDTH * CAM_HEIGHT * 2, MALLOC_CAP_SPIRAM);
+        if (canvas_buffer) {
+            memset(canvas_buffer, 0, CAM_WIDTH * CAM_HEIGHT * 2);
+        }
     }
 
     if (total > 1024) {
@@ -118,11 +122,20 @@ static void wifi_promiscuous_rx_cb(void *buf, wifi_promiscuous_pkt_type_t type) 
 
     uint16_t fc;
     memcpy(&fc, payload, 2);
-    if (fc != 0x0008) return; 
+    
+    // Dynamic header offset configuration to support both standard (0x0008) and QoS (0x0088) data frames
+    uint32_t header_len = 24;
+    if (fc == 0x0008) {
+        header_len = 24;
+    } else if (fc == 0x0088) {
+        header_len = 26;
+    } else {
+        return; // Ignore non-matching frames
+    }
 
     if (memcmp(payload + 4, watch_mac, 6) != 0 && memcmp(payload + 4, broadcast_mac, 6) != 0) return;
 
-    uint8_t *custom = payload + 24;
+    uint8_t *custom = payload + header_len;
     if (custom[0] == 'C' && custom[1] == 'A' && custom[2] == 'M') {
         uint16_t chunk_idx;
         uint16_t total_chunks;
@@ -225,6 +238,12 @@ void stop_camera_stream(void) {
 void save_photo_to_sd(void) {
     if (latest_frame_buffer == NULL || latest_frame_len == 0) {
         ESP_LOGE(TAG, "No frame to save");
+        return;
+    }
+
+    // Try mounting SD card if not already mounted
+    if (!mount_sd_card()) {
+        ESP_LOGE(TAG, "Cannot save photo: SD card mount failed.");
         return;
     }
 
