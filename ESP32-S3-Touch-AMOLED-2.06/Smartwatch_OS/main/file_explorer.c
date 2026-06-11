@@ -1,5 +1,6 @@
 #include "file_explorer.h"
 #include "camera_recv.h"
+#include "ui_app.h"
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
 #include "driver/i2s_std.h"
@@ -15,10 +16,10 @@ static const char *TAG = "FILE_EXPLORER";
 static sdmmc_card_t *card = NULL;
 static i2s_chan_handle_t tx_chan = NULL;
 
-static lv_obj_t *explorer_container = NULL;
-static lv_obj_t *file_list = NULL;
-static lv_obj_t *text_viewer = NULL;
-static lv_obj_t *img_viewer = NULL;
+static lv_obj_t * explorer_container = NULL;
+static lv_obj_t * file_list = NULL;
+static lv_obj_t * text_viewer = NULL;
+static lv_obj_t * img_viewer = NULL;
 
 static char current_dir[256] = "/sdcard";
 
