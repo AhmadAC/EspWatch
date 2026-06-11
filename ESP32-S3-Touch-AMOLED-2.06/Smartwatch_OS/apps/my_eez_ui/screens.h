@@ -24,6 +24,12 @@ typedef struct _objects_t {
     lv_obj_t *app_settings_2;
     lv_obj_t *app_settings_icon_2;
     lv_obj_t *label_settings_2;
+    lv_obj_t *app_settings_3;
+    lv_obj_t *app_cam_icon;
+    lv_obj_t *label_cam;
+    lv_obj_t *app_settings_4;
+    lv_obj_t *app_tools_icon;
+    lv_obj_t *label_spanner;
 } objects_t;
 
 extern objects_t objects;

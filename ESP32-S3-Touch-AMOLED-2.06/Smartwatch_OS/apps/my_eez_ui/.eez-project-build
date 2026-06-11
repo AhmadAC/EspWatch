@@ -12,8 +12,10 @@
     "ui.c",
     "ui.h",
     "ui_font_test.c",
+    "ui_image_cam.c",
     "ui_image_icon_clock.c",
     "ui_image_icon_gear.c",
+    "ui_image_spanner.c",
     "vars.h"
   ]
 }
