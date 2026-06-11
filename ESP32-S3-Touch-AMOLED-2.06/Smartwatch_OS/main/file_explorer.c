@@ -43,18 +43,48 @@ static bool es8311_write_reg(uint8_t reg, uint8_t val) {
 }
 
 void init_es8311_codec(void) {
-    es8311_write_reg(0x00, 0x1F); // Reset
-    vTaskDelay(pdMS_TO_TICKS(10));
+    // 1. Reset
+    es8311_write_reg(0x00, 0x1F); // Reset digital, CSM, clock manager
+    vTaskDelay(pdMS_TO_TICKS(20));
     es8311_write_reg(0x00, 0x00);
-    es8311_write_reg(0x00, 0x80); // Power on
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    // 2. Clock configuration (Standard I2S Slave Mode)
+    es8311_write_reg(0x01, 0x30); // clock manager reg01, select MCLK from pin, enable clock
+    es8311_write_reg(0x02, 0x10); // clk divider/multiplier
+    es8311_write_reg(0x03, 0x10); // ADC fsmode and osr
+    es8311_write_reg(0x04, 0x10); // DAC fsmode and osr
+    es8311_write_reg(0x05, 0x00); 
+    es8311_write_reg(0x06, 0x00); 
+
+    // 3. System Configuration
+    es8311_write_reg(0x0B, 0x00); 
+    es8311_write_reg(0x0C, 0x00); 
+    es8311_write_reg(0x10, 0x1F); 
+    es8311_write_reg(0x11, 0x7F); 
+
+    // 4. Power Up State Machine (CSM)
+    es8311_write_reg(0x00, 0x80); // Enable CSM
+
+    // 5. Analog Power Configuration
     es8311_write_reg(0x0D, 0x01); // Power up analog
-    es8311_write_reg(0x0E, 0x02);
+    es8311_write_reg(0x0E, 0x02); // Power up analog
     es8311_write_reg(0x12, 0x00); // DAC power up
     es8311_write_reg(0x13, 0x10); // HP drive
-    es8311_write_reg(0x32, 0xD9); // Set volume (85%)
+    es8311_write_reg(0x14, 0x1A); // PGA gain 30dB
+    es8311_write_reg(0x15, 0x00); 
+    es8311_write_reg(0x16, 0x24); // mic bias enable
+
+    // 6. Audio Interface Format (Standard I2S, 16-bit)
+    es8311_write_reg(0x09, 0x00); // I2S format, standard 16-bit
+    es8311_write_reg(0x0A, 0x00); 
+
+    // 7. Volume and Control
+    es8311_write_reg(0x31, 0x00); 
+    es8311_write_reg(0x32, 0xBF); // set volume (0xBF is ~90%)
 }
 
-void init_i2s_audio(uint32_t sample_rate) {
+void init_i2s_audio(uint32_t sample_rate, uint16_t num_channels, uint16_t bits_per_sample) {
     if (tx_chan != NULL) {
         i2s_channel_disable(tx_chan);
         i2s_del_channel(tx_chan);
@@ -64,9 +94,14 @@ void init_i2s_audio(uint32_t sample_rate) {
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     i2s_new_channel(&chan_cfg, &tx_chan, NULL);
 
+    i2s_slot_mode_t slot_mode = (num_channels == 2) ? I2S_SLOT_MODE_STEREO : I2S_SLOT_MODE_MONO;
+    i2s_data_bit_width_t bits_cfg = I2S_DATA_BIT_WIDTH_16BIT;
+    if (bits_per_sample == 24) bits_cfg = I2S_DATA_BIT_WIDTH_24BIT;
+    else if (bits_per_sample == 32) bits_cfg = I2S_DATA_BIT_WIDTH_32BIT;
+
     i2s_std_config_t std_cfg = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate),
-        .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(bits_cfg, slot_mode),
         .gpio_cfg = {
             .mclk = GPIO_NUM_16,
             .bclk = GPIO_NUM_41,
@@ -117,7 +152,7 @@ bool mount_sd_card(void) {
     }
 
     sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
-    slot_config.gpio_cs = GPIO_NUM_17; // Corrected board layout CS pin mapping
+    slot_config.gpio_cs = GPIO_NUM_17;
     slot_config.host_id = host.slot;
 
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
@@ -164,7 +199,7 @@ void play_wav_file(const char *filepath) {
     ESP_LOGI(TAG, "WAV info: rate=%lu, channels=%u, bits=%u", sample_rate, num_channels, bits_per_sample);
 
     init_es8311_codec();
-    init_i2s_audio(sample_rate);
+    init_i2s_audio(sample_rate, num_channels, bits_per_sample);
 
     size_t chunk_size = 4096;
     uint8_t *buf = malloc(chunk_size);
@@ -274,16 +309,19 @@ static void view_image_file(const char *filepath) {
 
     const char *ext = strrchr(filepath, '.');
     bool is_png = (ext && strcasecmp(ext, ".png") == 0);
+    bool is_jpg = (ext && (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0 || strcasecmp(ext, ".mjp") == 0 || strcasecmp(ext, ".mjpeg") == 0));
 
-    if (is_png) {
-        // PNG Viewing: using LVGL's lodepng decoder from a memory buffer
-        lv_image_dsc_t *img_dsc = malloc(sizeof(lv_image_dsc_t));
+    if (is_png || is_jpg) {
+        // Safe allocation using calloc to prevent unitialized memory garbage/crashes in LVGL 9
+        lv_image_dsc_t *img_dsc = calloc(1, sizeof(lv_image_dsc_t));
         if (img_dsc) {
             img_dsc->header.magic = LV_IMAGE_HEADER_MAGIC;
             img_dsc->header.cf = LV_COLOR_FORMAT_RAW;
+            img_dsc->header.flags = 0;
             img_dsc->header.w = 0;
             img_dsc->header.h = 0;
             img_dsc->header.stride = 0;
+            img_dsc->header.reserved_2 = 0;
             img_dsc->data_size = size;
             img_dsc->data = img_data;
             img_dsc->reserved = NULL;
@@ -294,43 +332,6 @@ static void view_image_file(const char *filepath) {
             
             // Clean up the image descriptor structure when the image widget is deleted
             lv_obj_add_event_cb(img, btn_delete_cb, LV_EVENT_DELETE, (void*)img_dsc);
-        }
-    } else {
-        // JPEG/MJPEG Viewing: using ROM-based tjpgd to decode into canvas
-        JDEC jd;
-        jpeg_decode_t dec = {
-            .data = img_data,
-            .len = size,
-            .offset = 0,
-            .out_buf = NULL,
-            .out_width = 0
-        };
-
-        uint8_t *work_buf = malloc(3100);
-        if (work_buf) {
-            if (jd_prepare(&jd, jpg_input_func, work_buf, 3100, &dec) == JDR_OK) {
-                // Dynamically read actual image dimensions
-                uint16_t img_w = jd.width;
-                uint16_t img_h = jd.height;
-                
-                uint8_t *temp_canvas_buf = heap_caps_malloc(img_w * img_h * 2, MALLOC_CAP_SPIRAM);
-                if (temp_canvas_buf) {
-                    dec.out_buf = (uint16_t *)temp_canvas_buf;
-                    dec.out_width = img_w;
-                    
-                    if (jd_decomp(&jd, jpg_output_func, 0) == JDR_OK) {
-                        lv_obj_t *canvas_img = lv_canvas_create(img_viewer);
-                        lv_canvas_set_buffer(canvas_img, temp_canvas_buf, img_w, img_h, LV_COLOR_FORMAT_RGB565);
-                        lv_obj_center(canvas_img);
-                        
-                        // Clean up temporary canvas frame buffer when the canvas widget is deleted
-                        lv_obj_add_event_cb(canvas_img, btn_delete_cb, LV_EVENT_DELETE, (void*)temp_canvas_buf);
-                    } else {
-                        free(temp_canvas_buf);
-                    }
-                }
-            }
-            free(work_buf);
         }
     }
 

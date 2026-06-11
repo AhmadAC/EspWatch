@@ -50,7 +50,7 @@ unsigned int jpg_output_func(JDEC *jd, void *bitmap, JRECT *rect) {
         for (int x = 0; x < width; x++) {
             int out_x = rect->left + x;
             int out_y = rect->top + y;
-            if (out_x < dec->out_width) {
+            if (out_x < dec->out_width && out_y < dec->out_height) {
                 int src_idx = (y * width + x) * 3;
                 uint8_t r = in[src_idx + 0];
                 uint8_t g = in[src_idx + 1];
@@ -142,14 +142,12 @@ static void esp_now_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t 
     const uint8_t *src_mac = NULL;
     
     // On ESP32-S3, valid memory space (SRAM/SROM/PSRAM) is 0x3C000000 - 0x3FFFFFFF.
-    // If recv_info is a pointer to the old-style raw 6-byte MAC array, its dereferenced
-    // first 4 bytes (treated as src_addr) will be an invalid out-of-bounds pointer.
     if (addr >= 0x3C000000 && addr <= 0x3FFFFFFF) {
         uintptr_t src_ptr = (uintptr_t)recv_info->src_addr;
         if (src_ptr >= 0x3C000000 && src_ptr <= 0x3FFFFFFF) {
             src_mac = recv_info->src_addr;
         } else {
-            src_mac = (const uint8_t *)recv_info; // It's actually the raw MAC address array itself!
+            src_mac = (const uint8_t *)recv_info; // Fallback to raw MAC address array representation
         }
     } else {
         return;
