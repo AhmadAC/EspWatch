@@ -218,6 +218,7 @@ static void view_text_file(const char *filepath) {
     lv_obj_set_style_bg_color(text_viewer, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(text_viewer, LV_OPA_COVER, 0);
     lv_obj_center(text_viewer);
+    lv_obj_move_to_foreground(text_viewer);
 
     lv_obj_t *ta = lv_textarea_create(text_viewer);
     lv_obj_set_size(ta, 390, 420);
@@ -266,6 +267,7 @@ static void view_image_file(const char *filepath) {
     lv_obj_set_style_bg_color(img_viewer, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(img_viewer, LV_OPA_COVER, 0);
     lv_obj_center(img_viewer);
+    lv_obj_move_to_foreground(img_viewer);
 
     // Automatically clean up dynamically allocated image source buffer when the viewer is closed
     lv_obj_add_event_cb(img_viewer, btn_delete_cb, LV_EVENT_DELETE, (void*)img_data);
@@ -295,31 +297,40 @@ static void view_image_file(const char *filepath) {
         }
     } else {
         // JPEG/MJPEG Viewing: using ROM-based tjpgd to decode into canvas
-        uint8_t *temp_canvas_buf = heap_caps_malloc(320 * 240 * 2, MALLOC_CAP_SPIRAM);
-        if (temp_canvas_buf) {
-            JDEC jd;
-            jpeg_decode_t dec = {
-                .data = img_data,
-                .len = size,
-                .offset = 0,
-                .out_buf = (uint16_t *)temp_canvas_buf,
-                .out_width = 320
-            };
+        JDEC jd;
+        jpeg_decode_t dec = {
+            .data = img_data,
+            .len = size,
+            .offset = 0,
+            .out_buf = NULL,
+            .out_width = 0
+        };
 
-            uint8_t *work_buf = malloc(3100);
-            if (work_buf) {
-                if (jd_prepare(&jd, jpg_input_func, work_buf, 3100, &dec) == JDR_OK) {
-                    jd_decomp(&jd, jpg_output_func, 0);
+        uint8_t *work_buf = malloc(3100);
+        if (work_buf) {
+            if (jd_prepare(&jd, jpg_input_func, work_buf, 3100, &dec) == JDR_OK) {
+                // Dynamically read actual image dimensions
+                uint16_t img_w = jd.width;
+                uint16_t img_h = jd.height;
+                
+                uint8_t *temp_canvas_buf = heap_caps_malloc(img_w * img_h * 2, MALLOC_CAP_SPIRAM);
+                if (temp_canvas_buf) {
+                    dec.out_buf = (uint16_t *)temp_canvas_buf;
+                    dec.out_width = img_w;
+                    
+                    if (jd_decomp(&jd, jpg_output_func, 0) == JDR_OK) {
+                        lv_obj_t *canvas_img = lv_canvas_create(img_viewer);
+                        lv_canvas_set_buffer(canvas_img, temp_canvas_buf, img_w, img_h, LV_COLOR_FORMAT_RGB565);
+                        lv_obj_center(canvas_img);
+                        
+                        // Clean up temporary canvas frame buffer when the canvas widget is deleted
+                        lv_obj_add_event_cb(canvas_img, btn_delete_cb, LV_EVENT_DELETE, (void*)temp_canvas_buf);
+                    } else {
+                        free(temp_canvas_buf);
+                    }
                 }
-                free(work_buf);
             }
-
-            lv_obj_t *canvas_img = lv_canvas_create(img_viewer);
-            lv_canvas_set_buffer(canvas_img, temp_canvas_buf, 320, 240, LV_COLOR_FORMAT_RGB565);
-            lv_obj_center(canvas_img);
-            
-            // Clean up temporary canvas frame buffer when the canvas widget is deleted
-            lv_obj_add_event_cb(canvas_img, btn_delete_cb, LV_EVENT_DELETE, (void*)temp_canvas_buf);
+            free(work_buf);
         }
     }
 

@@ -72,18 +72,24 @@ unsigned int jpg_output_func(JDEC *jd, void *bitmap, JRECT *rect) {
 static void handle_incoming_chunk(uint16_t idx, uint16_t total, uint16_t len, uint8_t *data) {
     if (!frame_reassembly_buf) {
         frame_reassembly_buf = heap_caps_malloc(128 * 1024, MALLOC_CAP_SPIRAM);
-        received_chunks_map = calloc(100, sizeof(bool));
+        received_chunks_map = calloc(1024, sizeof(bool)); // Increased to 1024 to prevent out-of-bounds corruption
         latest_frame_buffer = heap_caps_malloc(128 * 1024, MALLOC_CAP_SPIRAM);
         canvas_buffer = heap_caps_malloc(CAM_WIDTH * CAM_HEIGHT * 2, MALLOC_CAP_SPIRAM);
+    }
+
+    if (total > 1024) {
+        return; // Safety guard limit
     }
 
     if (total != expected_chunks || idx >= total) {
         expected_chunks = total;
         chunks_received = 0;
-        memset(received_chunks_map, 0, 100 * sizeof(bool));
+        if (received_chunks_map) {
+            memset(received_chunks_map, 0, 1024 * sizeof(bool));
+        }
     }
 
-    if (!received_chunks_map[idx]) {
+    if (received_chunks_map && !received_chunks_map[idx]) {
         received_chunks_map[idx] = true;
         chunks_received++;
 
@@ -129,6 +135,11 @@ static void wifi_promiscuous_rx_cb(void *buf, wifi_promiscuous_pkt_type_t type) 
 }
 
 static void esp_now_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len) {
+    // Explicit safety checks prevent core panics on floating packet entries
+    if (recv_info == NULL || recv_info->src_addr == NULL || data == NULL || len <= 0) {
+        return;
+    }
+
     if (len >= 9 && strncmp((const char*)data, "pyCAM_ACK", 9) == 0) {
         ESP_LOGI(TAG, "Seeed Studio Camera acknowledged our connection!");
         memcpy(camera_mac, recv_info->src_addr, 6);
