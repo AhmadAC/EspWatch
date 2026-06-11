@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include "lvgl.h"
 
-void init_es8311_codec(void);
+void init_es8311_codec(uint32_t sample_rate, uint16_t bits_per_sample);
 void init_i2s_audio(uint32_t sample_rate, uint16_t num_channels, uint16_t bits_per_sample);
 bool mount_sd_card(void);
 void play_wav_file(const char *filepath);
