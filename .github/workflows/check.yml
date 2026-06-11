@@ -1,0 +1,138 @@
+name: Build Smartwatch OS
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-espidf:
+    name: Build Smartwatch OS
+    runs-on: ubuntu-latest
+    container: espressif/idf:release-v5.4
+    
+    # Resolves Git ownership conflicts globally inside Docker container environments
+    env:
+      GIT_CONFIG_COUNT: 1
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: '*'
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Build Smartwatch OS
+        shell: bash
+        run: |
+          # Source the IDF environment variables
+          . /opt/esp/idf/export.sh
+          
+          # Create a flat output directory
+          mkdir -p build_out
+          
+          # Directly target ONLY the Smartwatch_OS directory
+          proj_dir="ESP32-S3-Touch-AMOLED-2.06/Smartwatch_OS"
+          proj_name="Smartwatch_OS"
+          
+          echo "=========================================="
+          echo "Compiling ESP-IDF Project: $proj_name"
+          echo "=========================================="
+          
+          if [ -d "$proj_dir" ] && [ -f "$proj_dir/CMakeLists.txt" ]; then
+            cd "$proj_dir"
+            
+            # Set target chip first to trigger Component Manager downloads
+            idf.py set-target esp32s3
+            
+            # Auto-repair spaces to equals signs in sdkconfig.defaults (fixes ignored PMU pins)
+            if [ -f "sdkconfig.defaults" ]; then
+                echo "Auto-repairing sdkconfig.defaults format..."
+                sed -i 's/CONFIG_\([A-Za-z0-9_]*\) \([-0-9A-Za-z_]*\)/CONFIG_\1=\2/g' sdkconfig.defaults
+            fi
+            
+            # ======================================================
+            # HOTFIX 1: Replace unsupported enums with safe equivalent values
+            # ======================================================
+            disp_port_file="managed_components/espressif__esp_lvgl_port/src/lvgl9/esp_gl_port_disp.c"
+            disp_port_file_alt="managed_components/espressif__esp_lvgl_port/src/lvgl9/esp_lvgl_port_disp.c"
+            if [ -f "$disp_port_file_alt" ]; then
+                disp_port_file="$disp_port_file_alt"
+            fi
+            
+            if [ -f "$disp_port_file" ]; then
+                echo "Applying C-level token replacement hotfix..."
+                sed -i 's/LV_COLOR_FORMAT_RGB565_SWAPPED/LV_COLOR_FORMAT_RGB565/g' "$disp_port_file"
+                sed -i 's/LV_COLOR_FORMAT_XRGB8888/LV_COLOR_FORMAT_RGB888/g' "$disp_port_file"
+            fi
+            # ======================================================
+            
+            # ======================================================
+            # COMPATIBILITY HOTFIX: Create <lvgl/lvgl.h> non-recursive redirect header
+            # ======================================================
+            echo "Creating non-recursive compatibility redirect header..."
+            mkdir -p "apps/my_eez_ui/lvgl"
+            echo '#ifndef COMPAT_LVGL_REDIRECT_H' > "apps/my_eez_ui/lvgl/lvgl.h"
+            echo '#define COMPAT_LVGL_REDIRECT_H' >> "apps/my_eez_ui/lvgl/lvgl.h"
+            echo '#include "../../../managed_components/lvgl__lvgl/lvgl.h"' >> "apps/my_eez_ui/lvgl/lvgl.h"
+            echo '#endif' >> "apps/my_eez_ui/lvgl/lvgl.h"
+            # ======================================================
+
+            # ======================================================
+            # HOTFIX 3: Fix EEZ Studio CMakeLists.txt Dependencies
+            # ======================================================
+            eez_cmake="apps/my_eez_ui/CMakeLists.txt"
+            if [ -f "$eez_cmake" ]; then
+                echo "Patching EEZ Studio CMakeLists.txt dependencies..."
+                # Promote LVGL from Private to Public requirement
+                sed -i 's/PRIV_REQUIRES/REQUIRES/g' "$eez_cmake"
+                # Strip out the unused and broken brookesia requirement
+                sed -i 's/espressif__esp-brookesia//g' "$eez_cmake"
+            fi
+            # ======================================================
+
+            # Compile the project
+            idf.py build
+            
+            # Navigate back to repository root
+            cd "$GITHUB_WORKSPACE"
+            
+            # Copy the 3 required binaries directly to build_out/ (no subfolders)
+            cp "$proj_dir/build/bootloader/bootloader.bin" "build_out/" 2>/dev/null || true
+            
+            # Copy partition table as both partition-table.bin and partitions.bin for tool compatibility
+            cp "$proj_dir/build/partition_table/partition-table.bin" "build_out/partition-table.bin" 2>/dev/null || true
+            cp "$proj_dir/build/partition_table/partition-table.bin" "build_out/partitions.bin" 2>/dev/null || true
+            
+            # Find and copy only the main app binary in the root of the build folder
+            find "$proj_dir/build" -maxdepth 1 -name "*.bin" -exec cp {} "build_out/" \;
+            
+            # Generate a Web Flasher Manifest for 1-click installation via Adafruit WebSerial ESPTool
+            echo "Generating Web Flasher manifest.json..."
+            echo '{' > build_out/manifest.json
+            echo '  "name": "Smartwatch OS",' >> build_out/manifest.json
+            echo '  "version": "1.0.0",' >> build_out/manifest.json
+            echo '  "builds": [' >> build_out/manifest.json
+            echo "    {" >> build_out/manifest.json
+            echo '      "chipFamily": "ESP32-S3",' >> build_out/manifest.json
+            echo '      "parts": [' >> build_out/manifest.json
+            echo '        { "path": "bootloader.bin", "offset": 0 },' >> build_out/manifest.json
+            echo '        { "path": "partitions.bin", "offset": 32768 },' >> build_out/manifest.json
+            echo '        { "path": "Smartwatch_OS.bin", "offset": 65536 }' >> build_out/manifest.json
+            echo "      ]" >> build_out/manifest.json
+            echo "    }" >> build_out/manifest.json
+            echo "  ]" >> build_out/manifest.json
+            echo "}" >> build_out/manifest.json
+          else
+            echo "Error: Directory $proj_dir does not exist or is missing CMakeLists.txt!"
+            exit 1
+          fi
+
+      - name: Upload ESP-IDF Compiled Binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: smartwatch-os-binaries
+          path: build_out/
