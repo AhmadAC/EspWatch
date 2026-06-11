@@ -267,29 +267,60 @@ static void view_image_file(const char *filepath) {
     lv_obj_set_style_bg_opa(img_viewer, LV_OPA_COVER, 0);
     lv_obj_center(img_viewer);
 
-    uint8_t *temp_canvas_buf = heap_caps_malloc(320 * 240 * 2, MALLOC_CAP_SPIRAM);
-    if (temp_canvas_buf) {
-        JDEC jd;
-        jpeg_decode_t dec = {
-            .data = img_data,
-            .len = size,
-            .offset = 0,
-            .out_buf = (uint16_t *)temp_canvas_buf,
-            .out_width = 320
-        };
+    // Automatically clean up dynamically allocated image source buffer when the viewer is closed
+    lv_obj_add_event_cb(img_viewer, btn_delete_cb, LV_EVENT_DELETE, (void*)img_data);
 
-        uint8_t *work_buf = malloc(3100);
-        if (work_buf) {
-            if (jd_prepare(&jd, jpg_input_func, work_buf, 3100, &dec) == JDR_OK) {
-                jd_decomp(&jd, jpg_output_func, 0);
-            }
-            free(work_buf);
+    const char *ext = strrchr(filepath, '.');
+    bool is_png = (ext && strcasecmp(ext, ".png") == 0);
+
+    if (is_png) {
+        // PNG Viewing: using LVGL's lodepng decoder from a memory buffer
+        lv_image_dsc_t *img_dsc = malloc(sizeof(lv_image_dsc_t));
+        if (img_dsc) {
+            img_dsc->header.magic = LV_IMAGE_HEADER_MAGIC;
+            img_dsc->header.cf = LV_COLOR_FORMAT_RAW;
+            img_dsc->header.w = 0;
+            img_dsc->header.h = 0;
+            img_dsc->header.stride = 0;
+            img_dsc->data_size = size;
+            img_dsc->data = img_data;
+            img_dsc->reserved = NULL;
+
+            lv_obj_t *img = lv_image_create(img_viewer);
+            lv_image_set_src(img, img_dsc);
+            lv_obj_center(img);
+            
+            // Clean up the image descriptor structure when the image widget is deleted
+            lv_obj_add_event_cb(img, btn_delete_cb, LV_EVENT_DELETE, (void*)img_dsc);
         }
+    } else {
+        // JPEG/MJPEG Viewing: using ROM-based tjpgd to decode into canvas
+        uint8_t *temp_canvas_buf = heap_caps_malloc(320 * 240 * 2, MALLOC_CAP_SPIRAM);
+        if (temp_canvas_buf) {
+            JDEC jd;
+            jpeg_decode_t dec = {
+                .data = img_data,
+                .len = size,
+                .offset = 0,
+                .out_buf = (uint16_t *)temp_canvas_buf,
+                .out_width = 320
+            };
 
-        lv_obj_t *canvas_img = lv_canvas_create(img_viewer);
-        lv_canvas_set_buffer(canvas_img, temp_canvas_buf, 320, 240, LV_COLOR_FORMAT_RGB565);
-        lv_obj_center(canvas_img);
-        lv_obj_add_event_cb(canvas_img, btn_delete_cb, LV_EVENT_DELETE, (void*)temp_canvas_buf);
+            uint8_t *work_buf = malloc(3100);
+            if (work_buf) {
+                if (jd_prepare(&jd, jpg_input_func, work_buf, 3100, &dec) == JDR_OK) {
+                    jd_decomp(&jd, jpg_output_func, 0);
+                }
+                free(work_buf);
+            }
+
+            lv_obj_t *canvas_img = lv_canvas_create(img_viewer);
+            lv_canvas_set_buffer(canvas_img, temp_canvas_buf, 320, 240, LV_COLOR_FORMAT_RGB565);
+            lv_obj_center(canvas_img);
+            
+            // Clean up temporary canvas frame buffer when the canvas widget is deleted
+            lv_obj_add_event_cb(canvas_img, btn_delete_cb, LV_EVENT_DELETE, (void*)temp_canvas_buf);
+        }
     }
 
     lv_obj_t *btn_close = lv_button_create(img_viewer);
@@ -299,8 +330,6 @@ static void view_image_file(const char *filepath) {
     lv_label_set_text(lbl_close, "Close");
     lv_obj_center(lbl_close);
     lv_obj_add_event_cb(btn_close, close_img_viewer_cb, LV_EVENT_CLICKED, NULL);
-
-    free(img_data);
 }
 
 static void file_click_cb(lv_event_t *e) {
@@ -330,7 +359,9 @@ static void file_click_cb(lv_event_t *e) {
                     view_text_file(path);
                 } else if (strcasecmp(ext, ".wav") == 0) {
                     play_wav_file(path);
-                } else if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0) {
+                } else if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0 ||
+                           strcasecmp(ext, ".mjp") == 0 || strcasecmp(ext, ".mjpeg") == 0 ||
+                           strcasecmp(ext, ".png") == 0) {
                     view_image_file(path);
                 }
             }
@@ -366,7 +397,9 @@ static void refresh_directory_list(const char *path) {
             if (ext) {
                 if (strcasecmp(ext, ".mp3") == 0 || strcasecmp(ext, ".wav") == 0) {
                     symbol = LV_SYMBOL_AUDIO;
-                } else if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0 || strcasecmp(ext, ".png") == 0) {
+                } else if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0 || 
+                           strcasecmp(ext, ".mjp") == 0 || strcasecmp(ext, ".mjpeg") == 0 ||
+                           strcasecmp(ext, ".png") == 0) {
                     symbol = LV_SYMBOL_IMAGE;
                 }
             }

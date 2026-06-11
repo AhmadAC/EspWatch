@@ -43,7 +43,7 @@ unsigned int jpg_input_func(JDEC *jd, uint8_t *buf, unsigned int num) {
 unsigned int jpg_output_func(JDEC *jd, void *bitmap, JRECT *rect) {
     jpeg_decode_t *dec = (jpeg_decode_t *)jd->device;
     uint16_t *out = dec->out_buf;
-    uint16_t *in = (uint16_t *)bitmap;
+    uint8_t *in = (uint8_t *)bitmap; // ROM TJPGD outputs RGB888 (3 bytes/pixel)
     int width = rect->right - rect->left + 1;
     int height = rect->bottom - rect->top + 1;
     for (int y = 0; y < height; y++) {
@@ -51,8 +51,17 @@ unsigned int jpg_output_func(JDEC *jd, void *bitmap, JRECT *rect) {
             int out_x = rect->left + x;
             int out_y = rect->top + y;
             if (out_x < dec->out_width) {
-                uint16_t pixel = in[y * width + x];
+                int src_idx = (y * width + x) * 3;
+                uint8_t r = in[src_idx + 0];
+                uint8_t g = in[src_idx + 1];
+                uint8_t b = in[src_idx + 2];
+                
+                // Pack RGB888 into RGB565
+                uint16_t pixel = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+                
+                // Swap bytes for display controller big-endian requirements
                 pixel = (pixel << 8) | (pixel >> 8);
+                
                 out[out_y * dec->out_width + out_x] = pixel;
             }
         }
