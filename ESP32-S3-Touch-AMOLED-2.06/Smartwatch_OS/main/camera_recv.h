@@ -24,7 +24,6 @@ typedef struct {
     uint32_t offset;
     uint16_t *out_buf;
     uint32_t out_width;
-    uint32_t out_height; // Added out_height to secure the decompressor against overflow
 } jpeg_decode_t;
 
 unsigned int jpg_input_func(JDEC *jd, uint8_t *buf, unsigned int num);

@@ -41,7 +41,7 @@ static lv_obj_t * tile_launcher;
 static lv_obj_t * tile_clock;
 static lv_obj_t * tile_settings;
 static lv_obj_t * tile_camera;
-lv_obj_t * tile_tools; // Non-static so that file_explorer.c can access it
+static lv_obj_t * tile_tools;
 
 static lv_obj_t * label_clock_hours;
 static lv_obj_t * label_clock_minutes;
@@ -50,10 +50,8 @@ static lv_obj_t * lbl_wifi;
 static lv_obj_t * btn_wifi_toggle;
 static lv_obj_t * lbl_wifi_toggle;
 static lv_obj_t * reboot_overlay = NULL;
-lv_obj_t * canvas = NULL;
+static lv_obj_t * canvas = NULL;
 static lv_obj_t * lbl_cam_status = NULL;
-
-static TaskHandle_t cam_decode_task_handle = NULL;
 
 void action_open_clock(lv_event_t * e) {
     lv_obj_set_tile(tv, tile_clock, LV_ANIM_ON);
@@ -64,11 +62,6 @@ void action_open_settings(lv_event_t * e) {
 }
 
 void action_camera(lv_event_t * e) {
-    if (!is_wifi_initialized()) {
-        ESP_LOGW("UI", "Camera cannot be launched: Wi-Fi stack is still initializing.");
-        return;
-    }
-    
     lv_obj_set_tile(tv, tile_camera, LV_ANIM_ON);
     
     // Hide video canvas and show loading text
@@ -112,7 +105,6 @@ static void btn_back_camera_cb(lv_event_t * e) {
 }
 
 static void btn_back_tools_cb(lv_event_t * e) {
-    stop_file_explorer_media();
     close_file_explorer();
     lv_obj_set_tile(tv, tile_launcher, LV_ANIM_ON);
 }
@@ -132,7 +124,6 @@ void trigger_return_home(void) {
             lv_scr_load_anim(launcher_scr, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
         }
         stop_camera_stream();
-        stop_file_explorer_media();
         close_file_explorer();
         lv_obj_set_tile(tv, tile_launcher, LV_ANIM_OFF);
         bsp_display_unlock();
@@ -148,7 +139,6 @@ static void indev_event_cb(lv_event_t * e) {
             if (act_obj == lv_screen_active() || act_obj == NULL) {
                 lv_scr_load_anim(launcher_scr, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
                 stop_camera_stream();
-                stop_file_explorer_media();
                 close_file_explorer();
                 lv_obj_set_tile(tv, tile_launcher, LV_ANIM_OFF);
             }
@@ -167,19 +157,11 @@ static void update_wifi_toggle_button_ui(void) {
 }
 
 static void btn_wifi_toggle_cb(lv_event_t * e) {
-    if (!is_wifi_initialized()) {
-        ESP_LOGW("UI", "Wi-Fi not initialized yet.");
-        return;
-    }
     toggle_wifi();
     update_wifi_toggle_button_ui();
 }
 
 static void btn_ap_mode_cb(lv_event_t * e) {
-    if (!is_wifi_initialized()) {
-        ESP_LOGW("UI", "Wi-Fi not initialized yet.");
-        return;
-    }
     start_ap_mode_task();
     lv_obj_t * ap_overlay = lv_obj_create(lv_screen_active());
     lv_obj_remove_style_all(ap_overlay);
@@ -279,40 +261,32 @@ static void hardware_poll_timer_cb(lv_timer_t * timer) {
         }
     }
 
-    ui_tick();
-}
-
-static void camera_decode_task(void *arg) {
-    uint8_t *work_buf = malloc(3100);
-    while(1) {
-        if (new_frame_ready && canvas != NULL && is_camera_connected()) {
-            new_frame_ready = false;
-            
+    // Real-Time Camera MJPEG rendering engine (safe main loop update context)
+    if (new_frame_ready && canvas != NULL && is_camera_connected()) {
+        new_frame_ready = false;
+        if (bsp_display_lock(100)) {
             JDEC jd;
             jpeg_decode_t dec = {
                 .data = latest_frame_buffer,
                 .len = latest_frame_len,
                 .offset = 0,
                 .out_buf = (uint16_t *)canvas_buffer,
-                .out_width = CAM_WIDTH,
-                .out_height = CAM_HEIGHT
+                .out_width = CAM_WIDTH
             };
             
+            uint8_t *work_buf = malloc(3100);
             if (work_buf) {
-                // Decode on the asynchronous RTOS thread so the LVGL thread doesn't hang!
                 if (jd_prepare(&jd, jpg_input_func, work_buf, 3100, &dec) == JDR_OK) {
-                    jd_decomp(&jd, jpg_output_func, 0); 
-                    
-                    // Attempt non-blocking lock to invalidate cleanly for hardware rendering
-                    if (bsp_display_lock(0)) {
-                        lv_obj_invalidate(canvas);
-                        bsp_display_unlock();
-                    }
+                    jd_decomp(&jd, jpg_output_func, 0);
+                    lv_obj_invalidate(canvas);
                 }
+                free(work_buf);
             }
+            bsp_display_unlock();
         }
-        vTaskDelay(pdMS_TO_TICKS(10)); // Prevent CPU hogging
     }
+
+    ui_tick();
 }
 
 void build_ui(void) {
@@ -373,17 +347,17 @@ void build_ui(void) {
         lv_obj_set_style_bg_opa(objects.main, LV_OPA_TRANSP, LV_PART_MAIN);
         lv_obj_set_style_border_width(objects.main, 0, LV_PART_MAIN);
 
-        if (objects.app_settings_icon_2 != NULL) {
-            lv_obj_set_style_bg_opa(objects.app_settings_icon_2, LV_OPA_TRANSP, LV_PART_MAIN);
-            lv_obj_set_style_border_width(objects.app_settings_icon_2, 0, LV_PART_MAIN);
+        if (objects.app_settings_2 != NULL) {
+            lv_obj_set_style_bg_opa(objects.app_settings_2, LV_OPA_TRANSP, LV_PART_MAIN);
+            lv_obj_set_style_border_width(objects.app_settings_2, 0, LV_PART_MAIN);
         }
         if (objects.obj0 != NULL) {
             lv_obj_set_style_bg_opa(objects.obj0, LV_OPA_TRANSP, LV_PART_MAIN);
             lv_obj_set_style_border_width(objects.obj0, 0, LV_PART_MAIN);
         }
-        if (objects.obj0__app_settings_icon_1 != NULL) {
-            lv_obj_set_style_bg_opa(objects.obj0__app_settings_icon_1, LV_OPA_TRANSP, LV_PART_MAIN);
-            lv_obj_set_style_border_width(objects.obj0__app_settings_icon_1, 0, LV_PART_MAIN);
+        if (objects.obj0__app_settings_1 != NULL) {
+            lv_obj_set_style_bg_opa(objects.obj0__app_settings_1, LV_OPA_TRANSP, LV_PART_MAIN);
+            lv_obj_set_style_border_width(objects.obj0__app_settings_1, 0, LV_PART_MAIN);
         }
 
         uint32_t child_cnt = lv_obj_get_child_count(objects.main);
@@ -453,16 +427,13 @@ void build_ui(void) {
     lv_obj_center(lbl_back_settings);
     lv_obj_add_event_cb(btn_back_settings, btn_back_settings_cb, LV_EVENT_CLICKED, NULL);
 
-    // --- CAMERA TILE (using direct, fast-updating lv_canvas) ---
+    // --- CAMERA TILE ---
     canvas = lv_canvas_create(tile_camera);
     if (canvas_buffer == NULL) {
         canvas_buffer = heap_caps_malloc(CAM_WIDTH * CAM_HEIGHT * 2, MALLOC_CAP_SPIRAM);
     }
     lv_canvas_set_buffer(canvas, canvas_buffer, CAM_WIDTH, CAM_HEIGHT, LV_COLOR_FORMAT_RGB565);
-    
-    // Scale uniformly by 2.09x (256 * 2.09 = 536) to perfectly fill the watch's vertical bounds (502 pixels tall)
-    lv_image_set_scale(canvas, 536); 
-    lv_obj_center(canvas); // Centering it safely crops the un-needed width off the screen edges
+    lv_obj_align(canvas, LV_ALIGN_CENTER, 0, -40);
 
     lv_obj_t * btn_capture = lv_button_create(tile_camera);
     lv_obj_set_size(btn_capture, 120, 50);
@@ -496,11 +467,5 @@ void build_ui(void) {
     }
 
     lv_obj_set_tile(tv, tile_launcher, LV_ANIM_OFF);
-    
-    // Spawn asynchronous decoder
-    if (cam_decode_task_handle == NULL) {
-        xTaskCreate(camera_decode_task, "cam_decode", 8192, NULL, 5, &cam_decode_task_handle);
-    }
-    
     lv_timer_create(hardware_poll_timer_cb, 50, NULL);
 }
