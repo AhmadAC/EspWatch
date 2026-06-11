@@ -218,7 +218,7 @@ static void view_text_file(const char *filepath) {
     lv_obj_set_style_bg_color(text_viewer, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(text_viewer, LV_OPA_COVER, 0);
     lv_obj_center(text_viewer);
-    lv_obj_move_to_foreground(text_viewer);
+    lv_obj_move_foreground(text_viewer);
 
     lv_obj_t *ta = lv_textarea_create(text_viewer);
     lv_obj_set_size(ta, 390, 420);
@@ -267,7 +267,7 @@ static void view_image_file(const char *filepath) {
     lv_obj_set_style_bg_color(img_viewer, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(img_viewer, LV_OPA_COVER, 0);
     lv_obj_center(img_viewer);
-    lv_obj_move_to_foreground(img_viewer);
+    lv_obj_move_foreground(img_viewer);
 
     // Automatically clean up dynamically allocated image source buffer when the viewer is closed
     lv_obj_add_event_cb(img_viewer, btn_delete_cb, LV_EVENT_DELETE, (void*)img_data);
@@ -291,11 +291,6 @@ static void view_image_file(const char *filepath) {
             lv_obj_t *img = lv_image_create(img_viewer);
             lv_image_set_src(img, img_dsc);
             lv_obj_center(img);
-            
-            // Auto scale to fill AMOLED screen dimensions dynamically
-            // 256 is the standard 1.0x baseline unit factor
-            lv_image_set_scale_x(img, 256);
-            lv_image_set_scale_y(img, 256);
             
             // Clean up the image descriptor structure when the image widget is deleted
             lv_obj_add_event_cb(img, btn_delete_cb, LV_EVENT_DELETE, (void*)img_dsc);
@@ -324,36 +319,12 @@ static void view_image_file(const char *filepath) {
                     dec.out_width = img_w;
                     
                     if (jd_decomp(&jd, jpg_output_func, 0) == JDR_OK) {
-                        lv_obj_t *img = lv_image_create(img_viewer);
+                        lv_obj_t *canvas_img = lv_canvas_create(img_viewer);
+                        lv_canvas_set_buffer(canvas_img, temp_canvas_buf, img_w, img_h, LV_COLOR_FORMAT_RGB565);
+                        lv_obj_center(canvas_img);
                         
-                        // Treat decoded buffer as an image source object so we can use hardware-less hardware scaling
-                        lv_image_dsc_t *img_dsc = malloc(sizeof(lv_image_dsc_t));
-                        if (img_dsc) {
-                            img_dsc->header.magic = LV_IMAGE_HEADER_MAGIC;
-                            img_dsc->header.cf = LV_COLOR_FORMAT_RGB565;
-                            img_dsc->header.w = img_w;
-                            img_dsc->header.h = img_h;
-                            img_dsc->header.stride = img_w * 2;
-                            img_dsc->data_size = img_w * img_h * 2;
-                            img_dsc->data = temp_canvas_buf;
-                            img_dsc->reserved = NULL;
-                            
-                            lv_image_set_src(img, img_dsc);
-                            
-                            // Map dimensions to stretch-to-fit
-                            uint32_t scale_x = (410 * 256) / img_w;
-                            uint32_t scale_y = (502 * 256) / img_h;
-                            lv_image_set_scale_x(img, scale_x);
-                            lv_image_set_scale_y(img, scale_y);
-                            
-                            lv_obj_center(img);
-                            
-                            // Cascade deletes to cleanly wipe both descriptors and temporary canvas buffer
-                            lv_obj_add_event_cb(img, btn_delete_cb, LV_EVENT_DELETE, (void*)img_dsc);
-                            lv_obj_add_event_cb(img, btn_delete_cb, LV_EVENT_DELETE, (void*)temp_canvas_buf);
-                        } else {
-                            free(temp_canvas_buf);
-                        }
+                        // Clean up temporary canvas frame buffer when the canvas widget is deleted
+                        lv_obj_add_event_cb(canvas_img, btn_delete_cb, LV_EVENT_DELETE, (void*)temp_canvas_buf);
                     } else {
                         free(temp_canvas_buf);
                     }
@@ -431,7 +402,7 @@ static void refresh_directory_list(const char *path) {
 
         const char *symbol = LV_SYMBOL_FILE;
         if (entry->d_type == DT_DIR) {
-            symbol = WIFI_MODE_AP; // generic placeholder directories
+            symbol = LV_SYMBOL_DIRECTORY; 
         } else {
             char *ext = strrchr(entry->d_name, '.');
             if (ext) {
