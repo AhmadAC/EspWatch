@@ -24,6 +24,10 @@ static bool camera_connected = false;
 static uint8_t watch_mac[6] = {0};
 static const uint8_t broadcast_mac[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
+bool is_camera_connected(void) {
+    return camera_connected;
+}
+
 unsigned int jpg_input_func(JDEC *jd, uint8_t *buf, unsigned int num) {
     jpeg_decode_t *dec = (jpeg_decode_t *)jd->device;
     if (dec->offset + num > dec->len) {
@@ -136,6 +140,8 @@ static void esp_now_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t 
 
 void start_camera_stream(void) {
     ESP_LOGI(TAG, "Starting camera stream...");
+    camera_connected = false;
+    new_frame_ready = false;
     
     esp_wifi_disconnect();
     esp_wifi_get_mac(WIFI_IF_STA, watch_mac);
@@ -170,6 +176,7 @@ void stop_camera_stream(void) {
         const char *stream_stop_msg = "pyCAM_STR_0";
         esp_now_send(camera_mac, (uint8_t *)stream_stop_msg, strlen(stream_stop_msg));
     }
+    camera_connected = false;
     esp_now_unregister_recv_cb();
     esp_now_deinit();
 }

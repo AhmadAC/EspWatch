@@ -109,7 +109,6 @@ bool mount_sd_card(void) {
         .max_transfer_sz = 4000,
     };
 
-    // Corrected DMA flag to SPI_DMA_CH_AUTO
     esp_err_t ret = spi_bus_initialize(host.slot, &bus_cfg, SPI_DMA_CH_AUTO);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize SPI bus.");
@@ -117,7 +116,7 @@ bool mount_sd_card(void) {
     }
 
     sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
-    slot_config.gpio_cs = GPIO_NUM_7;
+    slot_config.gpio_cs = GPIO_NUM_17; // Corrected board layout CS pin mapping
     slot_config.host_id = host.slot;
 
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
@@ -387,7 +386,8 @@ void start_file_explorer(void) {
     }
 
     if (explorer_container == NULL) {
-        explorer_container = lv_obj_create(lv_screen_active());
+        // Parented directly to tile_tools to prevent shifts and maintain AMOLED black backdrop
+        explorer_container = lv_obj_create(tile_tools);
         lv_obj_remove_style_all(explorer_container);
         lv_obj_set_size(explorer_container, 410, 502);
         lv_obj_set_style_bg_color(explorer_container, lv_color_black(), 0);

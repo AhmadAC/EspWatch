@@ -46,17 +46,6 @@ void create_screen_main() {
             lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
         }
         {
-            // app_settings_2
-            lv_obj_t *obj = lv_obj_create(parent_obj);
-            objects.app_settings_2 = obj;
-            lv_obj_set_pos(obj, 28, 90);
-            lv_obj_set_size(obj, 102, 122);
-            lv_obj_add_event_cb(obj, action_open_clock, LV_EVENT_PRESSED, (void *)0);
-            lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE|LV_OBJ_FLAG_SCROLL_CHAIN_HOR|LV_OBJ_FLAG_SCROLL_CHAIN_VER|LV_OBJ_FLAG_SCROLL_ELASTIC|LV_OBJ_FLAG_SCROLL_MOMENTUM|LV_OBJ_FLAG_SCROLL_WITH_ARROW);
-            lv_obj_set_scrollbar_mode(obj, LV_SCROLLBAR_MODE_OFF);
-            lv_obj_set_scroll_dir(obj, LV_DIR_NONE);
-        }
-        {
             // app_settings_icon_2
             lv_obj_t *obj = lv_imagebutton_create(parent_obj);
             objects.app_settings_icon_2 = obj;
@@ -80,17 +69,6 @@ void create_screen_main() {
             lv_label_set_text_static(obj, "Clock");
         }
         {
-            // app_settings_3
-            lv_obj_t *obj = lv_obj_create(parent_obj);
-            objects.app_settings_3 = obj;
-            lv_obj_set_pos(obj, 154, 90);
-            lv_obj_set_size(obj, 102, 122);
-            lv_obj_add_event_cb(obj, action_camera, LV_EVENT_PRESSED, (void *)0);
-            lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE|LV_OBJ_FLAG_SCROLL_CHAIN_HOR|LV_OBJ_FLAG_SCROLL_CHAIN_VER|LV_OBJ_FLAG_SCROLL_ELASTIC|LV_OBJ_FLAG_SCROLL_MOMENTUM|LV_OBJ_FLAG_SCROLL_WITH_ARROW);
-            lv_obj_set_scrollbar_mode(obj, LV_SCROLLBAR_MODE_OFF);
-            lv_obj_set_scroll_dir(obj, LV_DIR_NONE);
-        }
-        {
             // app_cam_icon
             lv_obj_t *obj = lv_imagebutton_create(parent_obj);
             objects.app_cam_icon = obj;
@@ -112,17 +90,6 @@ void create_screen_main() {
             lv_obj_set_scrollbar_mode(obj, LV_SCROLLBAR_MODE_OFF);
             lv_obj_set_scroll_dir(obj, LV_DIR_NONE);
             lv_label_set_text_static(obj, "Camera");
-        }
-        {
-            // app_settings_4
-            lv_obj_t *obj = lv_obj_create(parent_obj);
-            objects.app_settings_4 = obj;
-            lv_obj_set_pos(obj, 280, 90);
-            lv_obj_set_size(obj, 102, 122);
-            lv_obj_add_event_cb(obj, action_tools, LV_EVENT_PRESSED, (void *)0);
-            lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE|LV_OBJ_FLAG_SCROLL_CHAIN_HOR|LV_OBJ_FLAG_SCROLL_CHAIN_VER|LV_OBJ_FLAG_SCROLL_ELASTIC|LV_OBJ_FLAG_SCROLL_MOMENTUM|LV_OBJ_FLAG_SCROLL_WITH_ARROW);
-            lv_obj_set_scrollbar_mode(obj, LV_SCROLLBAR_MODE_OFF);
-            lv_obj_set_scroll_dir(obj, LV_DIR_NONE);
         }
         {
             // app_tools_icon
@@ -162,19 +129,9 @@ void create_user_widget_app_icon(lv_obj_t *parent_obj, int startWidgetIndex) {
     {
         lv_obj_t *parent_obj = obj;
         {
-            // app_settings_1
-            lv_obj_t *obj = lv_obj_create(parent_obj);
-            ((lv_obj_t **)&objects)[startWidgetIndex + 0] = obj;
-            lv_obj_set_pos(obj, 0, 0);
-            lv_obj_set_size(obj, 102, 122);
-            lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE|LV_OBJ_FLAG_SCROLL_CHAIN_HOR|LV_OBJ_FLAG_SCROLL_CHAIN_VER|LV_OBJ_FLAG_SCROLL_ELASTIC|LV_OBJ_FLAG_SCROLL_MOMENTUM|LV_OBJ_FLAG_SCROLL_WITH_ARROW);
-            lv_obj_set_scrollbar_mode(obj, LV_SCROLLBAR_MODE_OFF);
-            lv_obj_set_scroll_dir(obj, LV_DIR_NONE);
-        }
-        {
             // app_settings_icon_1
             lv_obj_t *obj = lv_imagebutton_create(parent_obj);
-            ((lv_obj_t **)&objects)[startWidgetIndex + 1] = obj;
+            ((lv_obj_t **)&objects)[startWidgetIndex + 0] = obj;
             lv_obj_set_pos(obj, 1, 0);
             lv_obj_set_size(obj, LV_SIZE_CONTENT, 100);
             lv_imagebutton_set_src(obj, LV_IMAGEBUTTON_STATE_RELEASED, NULL, &img_icon_gear, NULL);
@@ -185,7 +142,7 @@ void create_user_widget_app_icon(lv_obj_t *parent_obj, int startWidgetIndex) {
         {
             // label_settings_1
             lv_obj_t *obj = lv_label_create(parent_obj);
-            ((lv_obj_t **)&objects)[startWidgetIndex + 2] = obj;
+            ((lv_obj_t **)&objects)[startWidgetIndex + 1] = obj;
             lv_obj_set_pos(obj, 22, 99);
             lv_obj_set_size(obj, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
             lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);

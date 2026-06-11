@@ -18,9 +18,7 @@
 #include <sys/time.h>
 
 // Include the EEZ UI header from the my_eez_ui component
-// Fixed to relative path to overcome CMake configuration boundaries
 #include "../apps/my_eez_ui/ui.h"
-#include "../apps/my_eez_ui/screens.h"
 
 #define LCD_H_RES 410
 #define LCD_V_RES 502
@@ -53,6 +51,7 @@ static lv_obj_t * btn_wifi_toggle;
 static lv_obj_t * lbl_wifi_toggle;
 static lv_obj_t * reboot_overlay = NULL;
 static lv_obj_t * canvas = NULL;
+static lv_obj_t * lbl_cam_status = NULL;
 
 void action_open_clock(lv_event_t * e) {
     lv_obj_set_tile(tv, tile_clock, LV_ANIM_ON);
@@ -64,12 +63,32 @@ void action_open_settings(lv_event_t * e) {
 
 void action_camera(lv_event_t * e) {
     lv_obj_set_tile(tv, tile_camera, LV_ANIM_ON);
+    
+    // Hide video canvas and show loading text
+    if (canvas) {
+        lv_obj_add_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+    }
+    
+    if (!lbl_cam_status) {
+        lbl_cam_status = lv_label_create(tile_camera);
+        lv_obj_set_style_text_color(lbl_cam_status, lv_color_white(), 0);
+        lv_obj_set_style_text_font(lbl_cam_status, &lv_font_montserrat_20, 0);
+        lv_obj_align(lbl_cam_status, LV_ALIGN_CENTER, 0, -40);
+    }
+    lv_label_set_text(lbl_cam_status, "Searching for Cam...");
+    lv_obj_remove_flag(lbl_cam_status, LV_OBJ_FLAG_HIDDEN);
+
     start_camera_stream();
 }
 
 void action_tools(lv_event_t * e) {
-    lv_obj_set_tile(tv, tile_tools, LV_ANIM_ON);
-    start_file_explorer();
+    // Only transition if the SD card actually successfully mounts
+    if (mount_sd_card()) {
+        lv_obj_set_tile(tv, tile_tools, LV_ANIM_ON);
+        start_file_explorer();
+    } else {
+        ESP_LOGE("UI", "SD Card Mount Failed. Aborting Tools App entry.");
+    }
 }
 
 void action_custom_action(lv_event_t * e) {
@@ -224,8 +243,26 @@ static void hardware_poll_timer_cb(lv_timer_t * timer) {
     
     if (lbl_wifi) lv_label_set_text(lbl_wifi, get_wifi_connected_status() ? LV_SYMBOL_WIFI : "");
 
+    // Check camera connection status to show/hide loading label
+    if (is_camera_connected()) {
+        if (lbl_cam_status && !lv_obj_has_flag(lbl_cam_status, LV_OBJ_FLAG_HIDDEN)) {
+            lv_obj_add_flag(lbl_cam_status, LV_OBJ_FLAG_HIDDEN);
+            if (canvas) {
+                lv_obj_remove_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+    } else {
+        if (canvas && !lv_obj_has_flag(canvas, LV_OBJ_FLAG_HIDDEN)) {
+            lv_obj_add_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+            if (lbl_cam_status) {
+                lv_label_set_text(lbl_cam_status, "Searching for Cam...");
+                lv_obj_remove_flag(lbl_cam_status, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+    }
+
     // Real-Time Camera MJPEG rendering engine (safe main loop update context)
-    if (new_frame_ready && canvas != NULL) {
+    if (new_frame_ready && canvas != NULL && is_camera_connected()) {
         new_frame_ready = false;
         if (bsp_display_lock(100)) {
             JDEC jd;

@@ -7,16 +7,16 @@
 extern "C" {
 #endif
 
-extern const lv_image_dsc_t img_icon_gear;
-extern const lv_image_dsc_t img_icon_clock;
-extern const lv_image_dsc_t img_spanner;
-extern const lv_image_dsc_t img_cam;
+extern const lv_img_dsc_t img_icon_gear;
+extern const lv_img_dsc_t img_icon_clock;
+extern const lv_img_dsc_t img_spanner;
+extern const lv_img_dsc_t img_cam;
 
 #ifndef EXT_IMG_DESC_T
 #define EXT_IMG_DESC_T
 typedef struct _ext_img_desc_t {
     const char *name;
-    const lv_image_dsc_t *img_dsc;
+    const lv_img_dsc_t *img_dsc;
 } ext_img_desc_t;
 #endif
 

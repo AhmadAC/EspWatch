@@ -16,6 +16,7 @@ extern uint32_t latest_frame_len;
 void start_camera_stream(void);
 void stop_camera_stream(void);
 void save_photo_to_sd(void);
+bool is_camera_connected(void);
 
 typedef struct {
     const uint8_t *data;
