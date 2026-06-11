@@ -5,6 +5,7 @@
 #include "lvgl.h"
 
 extern lv_obj_t * tile_tools;
+extern lv_obj_t * canvas;
 
 void build_ui(void);
 void trigger_return_home(void);

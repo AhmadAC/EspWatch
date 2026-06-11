@@ -50,8 +50,10 @@ static lv_obj_t * lbl_wifi;
 static lv_obj_t * btn_wifi_toggle;
 static lv_obj_t * lbl_wifi_toggle;
 static lv_obj_t * reboot_overlay = NULL;
-static lv_obj_t * canvas = NULL;
+lv_obj_t * canvas = NULL;
 static lv_obj_t * lbl_cam_status = NULL;
+
+static TaskHandle_t cam_decode_task_handle = NULL;
 
 void action_open_clock(lv_event_t * e) {
     lv_obj_set_tile(tv, tile_clock, LV_ANIM_ON);
@@ -110,6 +112,7 @@ static void btn_back_camera_cb(lv_event_t * e) {
 }
 
 static void btn_back_tools_cb(lv_event_t * e) {
+    stop_file_explorer_media();
     close_file_explorer();
     lv_obj_set_tile(tv, tile_launcher, LV_ANIM_ON);
 }
@@ -129,6 +132,7 @@ void trigger_return_home(void) {
             lv_scr_load_anim(launcher_scr, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
         }
         stop_camera_stream();
+        stop_file_explorer_media();
         close_file_explorer();
         lv_obj_set_tile(tv, tile_launcher, LV_ANIM_OFF);
         bsp_display_unlock();
@@ -144,6 +148,7 @@ static void indev_event_cb(lv_event_t * e) {
             if (act_obj == lv_screen_active() || act_obj == NULL) {
                 lv_scr_load_anim(launcher_scr, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
                 stop_camera_stream();
+                stop_file_explorer_media();
                 close_file_explorer();
                 lv_obj_set_tile(tv, tile_launcher, LV_ANIM_OFF);
             }
@@ -274,10 +279,15 @@ static void hardware_poll_timer_cb(lv_timer_t * timer) {
         }
     }
 
-    // Real-Time Camera MJPEG rendering engine (safe main loop update context)
-    if (new_frame_ready && canvas != NULL && is_camera_connected()) {
-        new_frame_ready = false;
-        if (bsp_display_lock(100)) {
+    ui_tick();
+}
+
+static void camera_decode_task(void *arg) {
+    uint8_t *work_buf = malloc(3100);
+    while(1) {
+        if (new_frame_ready && canvas != NULL && is_camera_connected()) {
+            new_frame_ready = false;
+            
             JDEC jd;
             jpeg_decode_t dec = {
                 .data = latest_frame_buffer,
@@ -288,19 +298,18 @@ static void hardware_poll_timer_cb(lv_timer_t * timer) {
                 .out_height = CAM_HEIGHT
             };
             
-            uint8_t *work_buf = malloc(3100);
             if (work_buf) {
                 if (jd_prepare(&jd, jpg_input_func, work_buf, 3100, &dec) == JDR_OK) {
                     jd_decomp(&jd, jpg_output_func, 0);
-                    lv_obj_invalidate(canvas);
+                    if (bsp_display_lock(50)) {
+                        lv_obj_invalidate(canvas);
+                        bsp_display_unlock();
+                    }
                 }
-                free(work_buf);
             }
-            bsp_display_unlock();
         }
+        vTaskDelay(pdMS_TO_TICKS(10)); // Prevent CPU hogging
     }
-
-    ui_tick();
 }
 
 void build_ui(void) {
@@ -481,5 +490,6 @@ void build_ui(void) {
     }
 
     lv_obj_set_tile(tv, tile_launcher, LV_ANIM_OFF);
+    xTaskCreate(camera_decode_task, "cam_decode", 8192, NULL, 5, &cam_decode_task_handle);
     lv_timer_create(hardware_poll_timer_cb, 50, NULL);
 }

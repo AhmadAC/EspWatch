@@ -1,3 +1,4 @@
+// File: Smartwatch_OS/main/camera_recv.c
 #include "camera_recv.h"
 #include "wifi_app.h"
 #include "file_explorer.h"
@@ -73,9 +74,9 @@ unsigned int jpg_output_func(JDEC *jd, void *bitmap, JRECT *rect) {
 
 static void handle_incoming_chunk(uint16_t idx, uint16_t total, uint16_t len, uint8_t *data) {
     if (!frame_reassembly_buf) {
-        frame_reassembly_buf = heap_caps_malloc(128 * 1024, MALLOC_CAP_SPIRAM);
+        frame_reassembly_buf = heap_caps_malloc(256 * 1024, MALLOC_CAP_SPIRAM);
         received_chunks_map = calloc(1024, sizeof(bool)); // Increased to 1024 to prevent out-of-bounds corruption
-        latest_frame_buffer = heap_caps_malloc(128 * 1024, MALLOC_CAP_SPIRAM);
+        latest_frame_buffer = heap_caps_malloc(256 * 1024, MALLOC_CAP_SPIRAM);
         canvas_buffer = heap_caps_malloc(CAM_WIDTH * CAM_HEIGHT * 2, MALLOC_CAP_SPIRAM);
         if (canvas_buffer) {
             memset(canvas_buffer, 0, CAM_WIDTH * CAM_HEIGHT * 2);
@@ -99,15 +100,17 @@ static void handle_incoming_chunk(uint16_t idx, uint16_t total, uint16_t len, ui
         chunks_received++;
 
         uint32_t offset = idx * 1300;
-        if (offset + len <= 128 * 1024) {
+        if (offset + len <= 256 * 1024) {
             memcpy(frame_reassembly_buf + offset, data, len);
         }
 
         if (chunks_received == total) {
             uint32_t total_len = (total - 1) * 1300 + len;
-            memcpy(latest_frame_buffer, frame_reassembly_buf, total_len);
-            latest_frame_len = total_len;
-            new_frame_ready = true;
+            if (total_len <= 256 * 1024) {
+                memcpy(latest_frame_buffer, frame_reassembly_buf, total_len);
+                latest_frame_len = total_len;
+                new_frame_ready = true;
+            }
         }
     }
 }

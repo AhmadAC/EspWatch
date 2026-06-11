@@ -1,3 +1,4 @@
+// File: Smartwatch_OS/main/file_explorer.c
 #include "file_explorer.h"
 #include "camera_recv.h"
 #include "ui_app.h"
@@ -7,6 +8,8 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "bsp/esp-bsp.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
@@ -27,6 +30,14 @@ static void refresh_directory_list(const char *path);
 static void file_click_cb(lv_event_t *e);
 
 static i2c_master_dev_handle_t es8311_handle = NULL;
+
+static volatile bool wav_playing = false;
+static TaskHandle_t wav_task_handle = NULL;
+
+static volatile bool mjpeg_playing = false;
+static TaskHandle_t mjpeg_task_handle = NULL;
+static lv_obj_t *canvas_img = NULL;
+static uint8_t *mjpeg_canvas_buf = NULL;
 
 /*
  * Persistent I2C device acquisition for ES8311
@@ -383,22 +394,35 @@ bool mount_sd_card(void) {
     return true;
 }
 
-void play_wav_file(const char *filepath) {
+static void wav_play_task(void *arg) {
+    char *filepath = (char *)arg;
     FILE *f = fopen(filepath, "rb");
-    if (f == NULL) {
+    if (!f) {
         ESP_LOGE(TAG, "Failed to open audio file: %s", filepath);
+        free(filepath);
+        wav_playing = false;
+        wav_task_handle = NULL;
+        vTaskDelete(NULL);
         return;
     }
 
     uint8_t header[44];
     if (fread(header, 1, 44, f) != 44) {
         fclose(f);
+        free(filepath);
+        wav_playing = false;
+        wav_task_handle = NULL;
+        vTaskDelete(NULL);
         return;
     }
 
     if (memcmp(header, "RIFF", 4) != 0 || memcmp(header + 8, "WAVE", 4) != 0) {
         fclose(f);
         ESP_LOGE(TAG, "Not a valid WAV file");
+        free(filepath);
+        wav_playing = false;
+        wav_task_handle = NULL;
+        vTaskDelete(NULL);
         return;
     }
 
@@ -415,26 +439,45 @@ void play_wav_file(const char *filepath) {
     uint8_t *buf = malloc(chunk_size);
     if (!buf) {
         fclose(f);
+        free(filepath);
+        wav_playing = false;
+        wav_task_handle = NULL;
+        vTaskDelete(NULL);
         return;
     }
 
     size_t bytes_read;
-    while ((bytes_read = fread(buf, 1, chunk_size, f)) > 0) {
+    while (wav_playing && (bytes_read = fread(buf, 1, chunk_size, f)) > 0) {
         size_t bytes_written = 0;
         i2s_channel_write(tx_chan, buf, bytes_read, &bytes_written, portMAX_DELAY);
     }
 
     free(buf);
     fclose(f);
+    free(filepath);
 
     gpio_set_level(GPIO_NUM_46, 0);
     ESP_LOGI(TAG, "Audio playback completed");
+    wav_playing = false;
+    wav_task_handle = NULL;
+    vTaskDelete(NULL);
+}
+
+void play_wav_file(const char *filepath) {
+    if (wav_playing) {
+        wav_playing = false;
+        vTaskDelay(pdMS_TO_TICKS(150)); // wait for old task to cleanly exit
+    }
+    
+    char *path_copy = strdup(filepath);
+    wav_playing = true;
+    xTaskCreate(wav_play_task, "wav_play_task", 4096, path_copy, 5, &wav_task_handle);
 }
 
 static void btn_delete_cb(lv_event_t *e) {
-    char *path = (char*)lv_event_get_user_data(e);
-    if (path && strcmp(path, "..") != 0) {
-        free(path);
+    void *user_data = lv_event_get_user_data(e);
+    if (user_data && strcmp((char*)user_data, "..") != 0) {
+        free(user_data);
     }
 }
 
@@ -485,55 +528,33 @@ static void view_text_file(const char *filepath) {
 }
 
 static void close_img_viewer_cb(lv_event_t *e) {
+    mjpeg_playing = false;
     if (img_viewer) {
         lv_obj_delete(img_viewer);
         img_viewer = NULL;
     }
+    canvas_img = NULL;
 }
 
-static void view_mjpeg_file(const char *filepath) {
+static void mjpeg_play_task(void *arg) {
+    char *filepath = (char *)arg;
     FILE *f = fopen(filepath, "rb");
-    if (!f) return;
-
-    img_viewer = lv_obj_create(explorer_container);
-    lv_obj_set_size(img_viewer, 410, 502);
-    lv_obj_set_style_bg_color(img_viewer, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(img_viewer, LV_OPA_COVER, 0);
-    lv_obj_center(img_viewer);
-    lv_obj_move_foreground(img_viewer);
-
-    lv_obj_t *canvas_img = lv_canvas_create(img_viewer);
-    uint8_t *mjpeg_canvas_buf = heap_caps_malloc(CAM_WIDTH * CAM_HEIGHT * 2, MALLOC_CAP_SPIRAM);
-    if (!mjpeg_canvas_buf) {
-        fclose(f);
-        lv_obj_delete(img_viewer);
-        img_viewer = NULL;
+    if (!f) {
+        free(filepath);
+        mjpeg_playing = false;
+        mjpeg_task_handle = NULL;
+        vTaskDelete(NULL);
         return;
     }
-    memset(mjpeg_canvas_buf, 0, CAM_WIDTH * CAM_HEIGHT * 2);
-    lv_canvas_set_buffer(canvas_img, mjpeg_canvas_buf, CAM_WIDTH, CAM_HEIGHT, LV_COLOR_FORMAT_RGB565);
-    lv_obj_center(canvas_img);
 
-    // Register cleanup callback on deletion
-    lv_obj_add_event_cb(img_viewer, btn_delete_cb, LV_EVENT_DELETE, (void*)mjpeg_canvas_buf);
-
-    lv_obj_t *btn_close = lv_button_create(img_viewer);
-    lv_obj_set_size(btn_close, 100, 40);
-    lv_obj_align(btn_close, LV_ALIGN_BOTTOM_MID, 0, -10);
-    lv_obj_t *lbl_close = lv_label_create(btn_close);
-    lv_label_set_text(lbl_close, "Close");
-    lv_obj_center(lbl_close);
-    lv_obj_add_event_cb(btn_close, close_img_viewer_cb, LV_EVENT_CLICKED, NULL);
-
-    // Read and play frame loop
     size_t temp_buf_size = 64 * 1024;
     uint8_t *frame_buf = malloc(temp_buf_size);
     uint8_t *work_buf = malloc(3100);
 
     if (frame_buf && work_buf) {
-        while (img_viewer != NULL) {
-            // Find SOI marker (0xFFD8)
+        while (mjpeg_playing) {
             int c;
+            // Find SOI marker (0xFFD8)
             while ((c = fgetc(f)) != EOF) {
                 if (c == 0xFF) {
                     int next = fgetc(f);
@@ -542,15 +563,18 @@ static void view_mjpeg_file(const char *filepath) {
                     }
                 }
             }
-            if (feof(f)) break;
+            if (feof(f)) {
+                // End of file, loop video
+                fseek(f, 0, SEEK_SET);
+                continue;
+            }
 
-            // Collect bytes until EOI marker (0xFFD9)
             uint32_t frame_len = 2;
             frame_buf[0] = 0xFF;
             frame_buf[1] = 0xD8;
 
             bool found_eoi = false;
-            while (frame_len < temp_buf_size - 1) {
+            while (frame_len < temp_buf_size - 1 && mjpeg_playing) {
                 int byte = fgetc(f);
                 if (byte == EOF) break;
                 frame_buf[frame_len++] = byte;
@@ -560,7 +584,7 @@ static void view_mjpeg_file(const char *filepath) {
                 }
             }
 
-            if (found_eoi && img_viewer != NULL) {
+            if (found_eoi && mjpeg_playing && canvas_img != NULL) {
                 JDEC jd;
                 jpeg_decode_t dec = {
                     .data = frame_buf,
@@ -571,26 +595,73 @@ static void view_mjpeg_file(const char *filepath) {
                     .out_height = CAM_HEIGHT
                 };
 
-                if (bsp_display_lock(50)) {
-                    if (jd_prepare(&jd, jpg_input_func, work_buf, 3100, &dec) == JDR_OK) {
-                        jd_decomp(&jd, jpg_output_func, 0);
+                if (jd_prepare(&jd, jpg_input_func, work_buf, 3100, &dec) == JDR_OK) {
+                    jd_decomp(&jd, jpg_output_func, 0);
+                    if (bsp_display_lock(50)) {
                         lv_obj_invalidate(canvas_img);
+                        bsp_display_unlock();
                     }
-                    bsp_display_unlock();
                 }
-                
-                // Cap playback speed to ~20 FPS (50ms delay) to keep UI responsive
                 vTaskDelay(pdMS_TO_TICKS(50));
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(10));
             }
-            
-            // Allow other watch tasks to run
-            vTaskDelay(pdMS_TO_TICKS(5));
         }
     }
 
     free(frame_buf);
     free(work_buf);
     fclose(f);
+    free(filepath);
+    
+    // Give the UI thread a moment to finish deleting objects
+    vTaskDelay(pdMS_TO_TICKS(100));
+    if (mjpeg_canvas_buf) {
+        free(mjpeg_canvas_buf);
+        mjpeg_canvas_buf = NULL;
+    }
+    
+    mjpeg_playing = false;
+    mjpeg_task_handle = NULL;
+    vTaskDelete(NULL);
+}
+
+static void view_mjpeg_file(const char *filepath) {
+    if (mjpeg_playing || wav_playing) {
+        stop_file_explorer_media();
+        vTaskDelay(pdMS_TO_TICKS(150));
+    }
+
+    img_viewer = lv_obj_create(explorer_container);
+    lv_obj_set_size(img_viewer, 410, 502);
+    lv_obj_set_style_bg_color(img_viewer, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(img_viewer, LV_OPA_COVER, 0);
+    lv_obj_center(img_viewer);
+    lv_obj_move_foreground(img_viewer);
+
+    canvas_img = lv_canvas_create(img_viewer);
+    mjpeg_canvas_buf = heap_caps_malloc(CAM_WIDTH * CAM_HEIGHT * 2, MALLOC_CAP_SPIRAM);
+    if (!mjpeg_canvas_buf) {
+        lv_obj_delete(img_viewer);
+        img_viewer = NULL;
+        canvas_img = NULL;
+        return;
+    }
+    memset(mjpeg_canvas_buf, 0, CAM_WIDTH * CAM_HEIGHT * 2);
+    lv_canvas_set_buffer(canvas_img, mjpeg_canvas_buf, CAM_WIDTH, CAM_HEIGHT, LV_COLOR_FORMAT_RGB565);
+    lv_obj_center(canvas_img);
+
+    lv_obj_t *btn_close = lv_button_create(img_viewer);
+    lv_obj_set_size(btn_close, 100, 40);
+    lv_obj_align(btn_close, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_obj_t *lbl_close = lv_label_create(btn_close);
+    lv_label_set_text(lbl_close, "Close");
+    lv_obj_center(lbl_close);
+    lv_obj_add_event_cb(btn_close, close_img_viewer_cb, LV_EVENT_CLICKED, NULL);
+
+    char *path_copy = strdup(filepath);
+    mjpeg_playing = true;
+    xTaskCreate(mjpeg_play_task, "mjpeg_play_task", 8192, path_copy, 5, &mjpeg_task_handle);
 }
 
 static void view_image_file(const char *filepath) {
@@ -768,5 +839,14 @@ void start_file_explorer(void) {
 void close_file_explorer(void) {
     if (explorer_container != NULL) {
         lv_obj_add_flag(explorer_container, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void stop_file_explorer_media(void) {
+    if (wav_playing) {
+        wav_playing = false;
+    }
+    if (mjpeg_playing) {
+        mjpeg_playing = false;
     }
 }
