@@ -221,7 +221,7 @@ void init_i2s_audio(uint32_t sample_rate, uint16_t num_channels, uint16_t bits_p
             .mclk = GPIO_NUM_16,
             .bclk = GPIO_NUM_41,
             .ws = GPIO_NUM_45,
-            .dout = GPIO_NUM_40, // Corrected from 42 to 40 (I2S_DSDIN is on GPIO 40)
+            .dout = GPIO_NUM_40, // Corrected to GPIO 40
             .din = I2S_GPIO_UNUSED,
             .invert_flags = {
                 .mclk_inv = false,

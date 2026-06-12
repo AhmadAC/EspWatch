@@ -270,7 +270,7 @@ static void hardware_poll_timer_cb(lv_timer_t * timer) {
                 .data = latest_frame_buffer,
                 .len = latest_frame_len,
                 .offset = 0,
-                .out_buf = (uint16_t *)canvas_buffer,
+                .out_buf = (canvas_buffer != NULL) ? (uint16_t *)canvas_buffer : NULL,
                 .out_width = CAM_WIDTH
             };
             
