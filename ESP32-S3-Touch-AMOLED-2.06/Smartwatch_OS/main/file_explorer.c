@@ -806,4 +806,89 @@ static void refresh_directory_list(const char *path) {
     if (strcmp(path, "/sdcard") == 0) {
         ESP_LOGI(TAG, "[UI] Displaying virtual diagnostics channels on root layout");
         lv_obj_t *btn_test_sine = lv_list_add_button(file_list, LV_SYMBOL_AUDIO, " [TEST] Sine 1000Hz (16kHz Mono)");
-        lv_o
+        lv_obj_add_event_cb(btn_test_sine, file_click_cb, LV_EVENT_CLICKED, (void*)"_TEST_SINE");
+
+        lv_obj_t *btn_test_square = lv_list_add_button(file_list, LV_SYMBOL_AUDIO, " [TEST] Square 440Hz (16kHz Mono)");
+        lv_obj_add_event_cb(btn_test_square, file_click_cb, LV_EVENT_CLICKED, (void*)"_TEST_SQUARE");
+    }
+
+    DIR *dir = opendir(path);
+    if (dir == NULL) {
+        ESP_LOGE(TAG, "Failed to open directory: %s", path);
+        return;
+    }
+
+    if (strcmp(path, "/sdcard") != 0) {
+        lv_obj_t *btn = lv_list_add_button(file_list, LV_SYMBOL_DIRECTORY, ".. [Parent]");
+        lv_obj_add_event_cb(btn, file_click_cb, LV_EVENT_CLICKED, (void*)"..");
+    }
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        char full_path[300];
+        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+
+        const char *symbol = LV_SYMBOL_FILE;
+        if (entry->d_type == DT_DIR) {
+            symbol = LV_SYMBOL_DIRECTORY; 
+        } else {
+            char *ext = strrchr(entry->d_name, '.');
+            if (ext) {
+                if (strcasecmp(ext, ".mp3") == 0 || strcasecmp(ext, ".wav") == 0) {
+                    symbol = LV_SYMBOL_AUDIO;
+                } else if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0 || 
+                           strcasecmp(ext, ".mjp") == 0 || strcasecmp(ext, ".mjpeg") == 0 ||
+                           strcasecmp(ext, ".png") == 0) {
+                    symbol = LV_SYMBOL_IMAGE;
+                }
+            }
+        }
+
+        lv_obj_t *btn = lv_list_add_button(file_list, symbol, entry->d_name);
+        char *allocated_path = strdup(full_path);
+        lv_obj_add_event_cb(btn, file_click_cb, LV_EVENT_CLICKED, (void*)allocated_path);
+        lv_obj_add_event_cb(btn, btn_delete_cb, LV_EVENT_DELETE, (void*)allocated_path);
+    }
+    closedir(dir);
+}
+
+void start_file_explorer(void) {
+    if (!mount_sd_card()) {
+        ESP_LOGE(TAG, "Could not launch File Explorer - No SD Card found.");
+        return;
+    }
+
+    if (explorer_container == NULL) {
+        explorer_container = lv_obj_create(tile_tools);
+        lv_obj_remove_style_all(explorer_container);
+        lv_obj_set_size(explorer_container, 410, 502);
+        lv_obj_set_style_bg_color(explorer_container, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(explorer_container, LV_OPA_COVER, 0);
+
+        file_list = lv_list_create(explorer_container);
+        lv_obj_set_size(file_list, 390, 440);
+        lv_obj_align(file_list, LV_ALIGN_TOP_MID, 0, 10);
+        lv_obj_set_style_bg_color(file_list, lv_color_black(), 0);
+        lv_obj_set_style_text_color(file_list, lv_color_white(), 0);
+
+        refresh_directory_list(current_dir);
+    } else {
+        lv_obj_remove_flag(explorer_container, LV_OBJ_FLAG_HIDDEN);
+        refresh_directory_list(current_dir);
+    }
+}
+
+void close_file_explorer(void) {
+    if (explorer_container != NULL) {
+        lv_obj_add_flag(explorer_container, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void stop_file_explorer_media(void) {
+    if (wav_playing) {
+        wav_playing = false;
+    }
+    if (mjpeg_playing) {
+        mjpeg_playing = false;
+    }
+}
