@@ -189,7 +189,7 @@ static void hardware_poll_timer_cb(lv_timer_t * timer) {
 
     if (!is_screen_on) return;
 
-    time_t now; struct tm timeinfo; time(&now); localtime_r(&now, &timeinfo);
+    time_t now; struct tm timeinfo; time(&now); localtime_r(&now, timeinfo);
     char h[8], m[8]; snprintf(h, sizeof(h), "%d", timeinfo.tm_hour); snprintf(m, sizeof(m), "%02d", timeinfo.tm_min);
     if (label_clock_hours) lv_label_set_text(label_clock_hours, h);
     if (label_clock_minutes) lv_label_set_text(label_clock_minutes, m);

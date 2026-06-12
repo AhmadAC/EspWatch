@@ -164,42 +164,39 @@ static esp_err_t es8311_sample_frequency_config(uint32_t mclk_frequency, uint32_
 }
 
 void init_es8311_codec(uint32_t sample_rate, uint16_t bits_per_sample) {
-    es8311_write_reg(0x00, 0x1F); // Reset digital, CSM, clock manager
-    vTaskDelay(pdMS_TO_TICKS(20));
-    es8311_write_reg(0x00, 0x00);
+    es8311_write_reg(0x00, 0x00); // Reset
     vTaskDelay(pdMS_TO_TICKS(10));
-    es8311_write_reg(0x00, 0x80); // Power-on command
-
+    es8311_write_reg(0x01, 0x30); // Power down all except clock
+    
+    // Set up Master Clock / System Clock
     uint32_t mclk_frequency = sample_rate * 256; 
-    es8311_write_reg(0x01, 0x3F); // Enable all internal clocks, select MCLK pin input
-
-    uint8_t reg06;
-    es8311_read_reg(0x06, &reg06);
-    reg06 &= ~0x20; // SCLK not inverted
-    es8311_write_reg(0x06, reg06);
-
     es8311_sample_frequency_config(mclk_frequency, sample_rate);
-
-    uint8_t reg00;
-    es8311_read_reg(0x00, &reg00);
-    reg00 &= 0xBF; // Set to slave mode
-    es8311_write_reg(0x00, reg00);
+    
+    es8311_write_reg(0x00, 0x80); // Power up
     vTaskDelay(pdMS_TO_TICKS(10));
-
+    
+    // SDP In / Out format & resolution
     uint8_t res_val = 0x0C; // default 16-bit
     if (bits_per_sample == 24) res_val = 0x00;
     else if (bits_per_sample == 32) res_val = 0x10;
-
+    
     es8311_write_reg(0x09, res_val); // SDP In
     es8311_write_reg(0x0A, res_val); // SDP Out
-
-    es8311_write_reg(0x0D, 0x01); // Power up analog circuitry
-    es8311_write_reg(0x0E, 0x02); // Enable analog PGA, enable ADC modulator
+    
+    // Power management and analog configuration
+    es8311_write_reg(0x0D, 0x02); // Power up analog circuitry
+    es8311_write_reg(0x0E, 0x0F); // Power up PGA, ADC, and internal bias
+    es8311_write_reg(0x0F, 0x44); // Analog output configuration
     es8311_write_reg(0x12, 0x00); // Power up DAC
-    es8311_write_reg(0x13, 0x10); // Enable output to HP drive
-    es8311_write_reg(0x1C, 0x6A); // ADC Equalizer bypass, cancel DC offset
-    es8311_write_reg(0x37, 0x08); // Bypass DAC equalizer
-    es8311_write_reg(0x32, 0xBF); // Set default output volume (~90%)
+    es8311_write_reg(0x13, 0x10); // Enable output to HP drive (headphone/speaker amp)
+    es8311_write_reg(0x1C, 0x00); // ADC / DAC offset cancel
+    es8311_write_reg(0x37, 0x00); // Bypass DAC equalizer
+    
+    // Volume & Unmute
+    es8311_write_reg(0x31, 0x00); // Unmute DAC output
+    es8311_write_reg(0x32, 0xBF); // Set Speaker Volume to Max (0xBF = 0dB)
+    
+    vTaskDelay(pdMS_TO_TICKS(50));
 }
 
 void init_i2s_audio(uint32_t sample_rate, uint16_t num_channels, uint16_t bits_per_sample) {
@@ -224,7 +221,7 @@ void init_i2s_audio(uint32_t sample_rate, uint16_t num_channels, uint16_t bits_p
             .mclk = GPIO_NUM_16,
             .bclk = GPIO_NUM_41,
             .ws = GPIO_NUM_45,
-            .dout = GPIO_NUM_42,
+            .dout = GPIO_NUM_40, // Corrected from 42 to 40 (I2S_DSDIN is on GPIO 40)
             .din = I2S_GPIO_UNUSED,
             .invert_flags = {
                 .mclk_inv = false,
@@ -587,6 +584,10 @@ static void view_image_file(const char *filepath) {
     lv_obj_center(img_viewer);
     lv_obj_move_foreground(img_viewer);
 
+    // Make the entire background of the viewer clickable to close it
+    lv_obj_add_flag(img_viewer, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(img_viewer, close_img_viewer_cb, LV_EVENT_CLICKED, NULL);
+
     // Automatically clean up dynamically allocated image source buffer when the viewer is closed
     lv_obj_add_event_cb(img_viewer, btn_delete_cb, LV_EVENT_DELETE, (void*)img_data);
 
@@ -613,18 +614,14 @@ static void view_image_file(const char *filepath) {
             lv_image_set_src(img, img_dsc);
             lv_obj_center(img);
             
+            // Also make the image itself clickable to close the viewer
+            lv_obj_add_flag(img, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_event_cb(img, close_img_viewer_cb, LV_EVENT_CLICKED, NULL);
+            
             // Clean up the image descriptor structure when the image widget is deleted
             lv_obj_add_event_cb(img, btn_delete_cb, LV_EVENT_DELETE, (void*)img_dsc);
         }
     }
-
-    lv_obj_t *btn_close = lv_button_create(img_viewer);
-    lv_obj_set_size(btn_close, 100, 40);
-    lv_obj_align(btn_close, LV_ALIGN_BOTTOM_MID, 0, -10);
-    lv_obj_t *lbl_close = lv_label_create(btn_close);
-    lv_label_set_text(lbl_close, "Close");
-    lv_obj_center(lbl_close);
-    lv_obj_add_event_cb(btn_close, close_img_viewer_cb, LV_EVENT_CLICKED, NULL);
 }
 
 static void file_click_cb(lv_event_t *e) {
