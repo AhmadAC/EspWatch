@@ -164,9 +164,13 @@ static esp_err_t es8311_sample_frequency_config(uint32_t mclk_frequency, uint32_
 }
 
 void init_es8311_codec(uint32_t sample_rate, uint16_t bits_per_sample) {
-    es8311_write_reg(0x00, 0x00); // Reset
+    // Corrected software reset sequence
+    es8311_write_reg(0x00, 0x1F); 
+    vTaskDelay(pdMS_TO_TICKS(20));
+    es8311_write_reg(0x00, 0x00); 
     vTaskDelay(pdMS_TO_TICKS(10));
-    es8311_write_reg(0x01, 0x30); // Power down all except clock
+    
+    es8311_write_reg(0x01, 0x3F); // Power down all except clock
     
     // Set up Master Clock / System Clock
     uint32_t mclk_frequency = sample_rate * 256; 
@@ -183,9 +187,12 @@ void init_es8311_codec(uint32_t sample_rate, uint16_t bits_per_sample) {
     es8311_write_reg(0x09, res_val); // SDP In
     es8311_write_reg(0x0A, res_val); // SDP Out
     
-    // Power management and analog configuration
-    es8311_write_reg(0x0D, 0x02); // Power up analog circuitry
-    es8311_write_reg(0x0E, 0x0F); // Power up PGA, ADC, and internal bias
+    // Power management and analog configurations mapped to known-good values
+    es8311_write_reg(0x0D, 0x03); // Power up ADC + DAC
+    vTaskDelay(pdMS_TO_TICKS(10));
+    es8311_write_reg(0x0E, 0x02); // Power up PGA, ADC modulator
+    vTaskDelay(pdMS_TO_TICKS(10));
+    
     es8311_write_reg(0x0F, 0x44); // Analog output configuration
     es8311_write_reg(0x12, 0x00); // Power up DAC
     es8311_write_reg(0x13, 0x10); // Enable output to HP drive (headphone/speaker amp)
@@ -221,8 +228,8 @@ void init_i2s_audio(uint32_t sample_rate, uint16_t num_channels, uint16_t bits_p
             .mclk = GPIO_NUM_16,
             .bclk = GPIO_NUM_41,
             .ws = GPIO_NUM_45,
-            .dout = GPIO_NUM_40, // Corrected to GPIO 40
-            .din = I2S_GPIO_UNUSED,
+            .dout = GPIO_NUM_42, // Corrected to GPIO 42 (I2S_ASDOUT for ES8311)
+            .din = GPIO_NUM_40,  // Corrected to GPIO 40 (I2S_DSDIN for ES7210)
             .invert_flags = {
                 .mclk_inv = false,
                 .bclk_inv = false,
