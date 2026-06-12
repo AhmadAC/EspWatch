@@ -13,6 +13,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <math.h>
 
 static const char *TAG = "FILE_EXPLORER";
 
@@ -39,45 +40,69 @@ static TaskHandle_t mjpeg_task_handle = NULL;
 static lv_obj_t *canvas_img = NULL;
 static uint8_t *mjpeg_canvas_buf = NULL;
 
+typedef struct {
+    uint32_t sample_rate;
+    uint32_t frequency;
+    uint32_t duration_ms;
+    uint8_t wave_type; // 0 = Sine, 1 = Square
+} test_tone_config_t;
+
 /*
  * Persistent I2C device acquisition for ES8311
  */
 static bool init_es8311_device(void) {
     if (es8311_handle != NULL) return true;
     
+    ESP_LOGI(TAG, "[I2C Config] Locating I2C Master Bus...");
     i2c_master_bus_handle_t bus = bsp_i2c_get_handle();
     if (bus == NULL) {
+        ESP_LOGI(TAG, "[I2C Config] Bus uninitialized, running bsp_i2c_init()...");
         bsp_i2c_init();
         bus = bsp_i2c_get_handle();
     }
     if (bus == NULL) {
-        ESP_LOGE(TAG, "Failed to get I2C master bus handle");
+        ESP_LOGE(TAG, "[I2C Config] Failed to retrieve valid I2C master bus handle.");
         return false;
     }
 
     i2c_device_config_t dev_cfg = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = 0x18, // ES8311 I2C address
+        .device_address = 0x18, // ES8311 I2C 7-bit address
         .scl_speed_hz = 100000,
     };
 
+    ESP_LOGI(TAG, "[I2C Config] Registering ES8311 device onto I2C bus at 7-bit addr: 0x18");
     if (i2c_master_bus_add_device(bus, &dev_cfg, &es8311_handle) == ESP_OK) {
-        ESP_LOGI(TAG, "ES8311 I2C device added successfully");
+        ESP_LOGI(TAG, "[I2C Config] ES8311 I2C device attached successfully.");
         return true;
     }
-    ESP_LOGE(TAG, "Failed to add ES8311 I2C device");
+    ESP_LOGE(TAG, "[I2C Config] Failed to attach ES8311 to I2C bus.");
     return false;
 }
 
 static bool es8311_write_reg(uint8_t reg, uint8_t val) {
     if (!init_es8311_device()) return false;
     uint8_t data[2] = { reg, val };
-    return i2c_master_transmit(es8311_handle, data, 2, -1) == ESP_OK;
+    esp_err_t err = i2c_master_transmit(es8311_handle, data, 2, -1);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "[Codec Register Write] Write Reg [0x%02X] = 0x%02X (OK)", reg, val);
+        return true;
+    } else {
+        ESP_LOGE(TAG, "[Codec Register Write] Write Reg [0x%02X] = 0x%02X FAILED! Error code: %d", reg, val, err);
+        return false;
+    }
 }
 
 static bool es8311_read_reg(uint8_t reg, uint8_t *val) {
     if (!init_es8311_device()) return false;
-    return i2c_master_transmit_receive(es8311_handle, &reg, 1, val, 1, -1) == ESP_OK;
+    esp_err_t err = i2c_master_transmit_receive(es8311_handle, &reg, 1, val, 1, -1);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "[Codec Register Read] Read Reg [0x%02X] -> 0x%02X", reg, *val);
+        return true;
+    } else {
+        ESP_LOGE(TAG, "[Codec Register Read] Read Reg [0x%02X] FAILED! Error code: %d", reg, err);
+        return false;
+    }
 }
 
 /*
@@ -126,11 +151,13 @@ static esp_err_t es8311_sample_frequency_config(uint32_t mclk_frequency, uint32_
     uint8_t regv;
     int coeff = get_coeff(mclk_frequency, sample_frequency);
     if (coeff < 0) {
-        ESP_LOGE(TAG, "Unable to configure sample rate %luHz with %luHz MCLK", sample_frequency, mclk_frequency);
+        ESP_LOGE(TAG, "[Codec Clock] Unable to configure sample rate %luHz with %luHz MCLK", sample_frequency, mclk_frequency);
         return ESP_ERR_INVALID_ARG;
     }
 
     const struct _coeff_div *selected_coeff = &coeff_div[coeff];
+    ESP_LOGI(TAG, "[Codec Clock] Match found in LUT! Setting pre_div=%u, pre_multi=%u, adc_div=%u, dac_div=%u", 
+             selected_coeff->pre_div, selected_coeff->pre_multi, selected_coeff->adc_div, selected_coeff->dac_div);
 
     es8311_read_reg(0x02, &regv);
     regv &= 0x07;
@@ -164,7 +191,9 @@ static esp_err_t es8311_sample_frequency_config(uint32_t mclk_frequency, uint32_
 }
 
 void init_es8311_codec(uint32_t sample_rate, uint16_t bits_per_sample) {
-    // Corrected software reset sequence
+    ESP_LOGI(TAG, "[Codec Init] Starting ES8311 configuration process. Rate: %luHz, Bits: %d", sample_rate, bits_per_sample);
+    
+    // Software reset
     es8311_write_reg(0x00, 0x1F); 
     vTaskDelay(pdMS_TO_TICKS(20));
     es8311_write_reg(0x00, 0x00); 
@@ -204,10 +233,13 @@ void init_es8311_codec(uint32_t sample_rate, uint16_t bits_per_sample) {
     es8311_write_reg(0x32, 0xBF); // Set Speaker Volume to Max (0xBF = 0dB)
     
     vTaskDelay(pdMS_TO_TICKS(50));
+    ESP_LOGI(TAG, "[Codec Init] ES8311 hardware pathways configured and unmuted.");
 }
 
 void init_i2s_audio(uint32_t sample_rate, uint16_t num_channels, uint16_t bits_per_sample) {
+    ESP_LOGI(TAG, "[I2S Audio] Initializing transceiver channel...");
     if (tx_chan != NULL) {
+        ESP_LOGI(TAG, "[I2S Audio] Deleting existing active I2S channel...");
         i2s_channel_disable(tx_chan);
         i2s_del_channel(tx_chan);
         tx_chan = NULL;
@@ -220,6 +252,13 @@ void init_i2s_audio(uint32_t sample_rate, uint16_t num_channels, uint16_t bits_p
     i2s_data_bit_width_t bits_cfg = I2S_DATA_BIT_WIDTH_16BIT;
     if (bits_per_sample == 24) bits_cfg = I2S_DATA_BIT_WIDTH_24BIT;
     else if (bits_per_sample == 32) bits_cfg = I2S_DATA_BIT_WIDTH_32BIT;
+
+    ESP_LOGI(TAG, "[I2S Audio] Pins being configured at ESP32-S3 driver side:\n"
+                  "             * MCLK  -> GPIO 16\n"
+                  "             * BCLK  -> GPIO 41\n"
+                  "             * LRCK  -> GPIO 45\n"
+                  "             * DOUT  -> GPIO 42 (Sends output data to ES8311 DAC)\n"
+                  "             * DIN   -> GPIO 40 (Receives input data from ES7210 Mic)");
 
     i2s_std_config_t std_cfg = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate),
@@ -240,6 +279,7 @@ void init_i2s_audio(uint32_t sample_rate, uint16_t num_channels, uint16_t bits_p
     i2s_channel_init_std_mode(tx_chan, &std_cfg);
     i2s_channel_enable(tx_chan);
 
+    ESP_LOGI(TAG, "[I2S Audio] Enabling hardware PA (Power Amplifier) on GPIO 46...");
     gpio_config_t io_conf = {
         .pin_bit_mask = (1ULL << GPIO_NUM_46),
         .mode = GPIO_MODE_OUTPUT,
@@ -247,13 +287,17 @@ void init_i2s_audio(uint32_t sample_rate, uint16_t num_channels, uint16_t bits_p
         .pull_up_en = 0
     };
     gpio_config(&io_conf);
-    gpio_set_level(GPIO_NUM_46, 1); // Enable PA amplifier
+    gpio_set_level(GPIO_NUM_46, 1); // Enable PA amplifier (GPIO 46 active high)
 }
 
 bool mount_sd_card(void) {
     if (card != NULL) return true;
 
-    ESP_LOGI(TAG, "Mounting SD Card...");
+    ESP_LOGI(TAG, "[SD Mount] Initializing SPI bus and mounting card filesystem...\n"
+                  "           * MOSI -> GPIO 1\n"
+                  "           * MISO -> GPIO 3\n"
+                  "           * SCK  -> GPIO 2\n"
+                  "           * CS   -> GPIO 17");
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
     host.slot = SPI3_HOST;
@@ -269,7 +313,7 @@ bool mount_sd_card(void) {
 
     esp_err_t ret = spi_bus_initialize(host.slot, &bus_cfg, SPI_DMA_CH_AUTO);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize SPI bus.");
+        ESP_LOGE(TAG, "[SD Mount] Failed to initialize SPI bus.");
         return false;
     }
 
@@ -285,21 +329,22 @@ bool mount_sd_card(void) {
 
     ret = esp_vfs_fat_sdspi_mount("/sdcard", &host, &slot_config, &mount_config, &card);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to mount filesystem.");
+        ESP_LOGE(TAG, "[SD Mount] Failed to mount filesystem.");
         spi_bus_free(host.slot);
         card = NULL;
         return false;
     }
 
-    ESP_LOGI(TAG, "SD Card mounted successfully.");
+    ESP_LOGI(TAG, "[SD Mount] SD Card mounted successfully onto virtual path /sdcard.");
     return true;
 }
 
 static void wav_play_task(void *arg) {
     char *filepath = (char *)arg;
+    ESP_LOGI(TAG, "[Audio Task] Preparing to play WAV file: %s", filepath);
     FILE *f = fopen(filepath, "rb");
     if (!f) {
-        ESP_LOGE(TAG, "Failed to open audio file: %s", filepath);
+        ESP_LOGE(TAG, "[Audio Task] Failed to open audio file: %s", filepath);
         free(filepath);
         wav_playing = false;
         wav_task_handle = NULL;
@@ -319,7 +364,7 @@ static void wav_play_task(void *arg) {
 
     if (memcmp(header, "RIFF", 4) != 0 || memcmp(header + 8, "WAVE", 4) != 0) {
         fclose(f);
-        ESP_LOGE(TAG, "Not a valid WAV file");
+        ESP_LOGE(TAG, "[Audio Task] Not a valid WAV file - missing RIFF/WAVE header descriptor.");
         free(filepath);
         wav_playing = false;
         wav_task_handle = NULL;
@@ -331,7 +376,10 @@ static void wav_play_task(void *arg) {
     uint16_t num_channels = *(uint16_t*)(header + 22);
     uint16_t bits_per_sample = *(uint16_t*)(header + 34);
 
-    ESP_LOGI(TAG, "WAV info: rate=%lu, channels=%u, bits=%u", sample_rate, num_channels, bits_per_sample);
+    ESP_LOGI(TAG, "[Audio Task] Parsing successful. Properties:\n"
+                  "             * Sample Rate: %lu Hz\n"
+                  "             * Channels: %u\n"
+                  "             * Bit Depth: %u-bit", sample_rate, num_channels, bits_per_sample);
 
     init_es8311_codec(sample_rate, bits_per_sample);
     init_i2s_audio(sample_rate, num_channels, bits_per_sample);
@@ -348,6 +396,7 @@ static void wav_play_task(void *arg) {
     }
 
     size_t bytes_read;
+    ESP_LOGI(TAG, "[Audio Task] Commencing write buffer operations...");
     while (wav_playing && (bytes_read = fread(buf, 1, chunk_size, f)) > 0) {
         size_t bytes_written = 0;
         i2s_channel_write(tx_chan, buf, bytes_read, &bytes_written, portMAX_DELAY);
@@ -357,8 +406,9 @@ static void wav_play_task(void *arg) {
     fclose(f);
     free(filepath);
 
+    ESP_LOGI(TAG, "[Audio Task] Muting PA amplifier pin GPIO 46.");
     gpio_set_level(GPIO_NUM_46, 0); // Disable PA
-    ESP_LOGI(TAG, "Audio playback completed");
+    ESP_LOGI(TAG, "[Audio Task] Audio playback completed.");
     wav_playing = false;
     wav_task_handle = NULL;
     vTaskDelete(NULL);
@@ -366,6 +416,7 @@ static void wav_play_task(void *arg) {
 
 void play_wav_file(const char *filepath) {
     if (wav_playing) {
+        ESP_LOGI(TAG, "[Audio Task] Stopping active WAV play task before loading new audio.");
         wav_playing = false;
         vTaskDelay(pdMS_TO_TICKS(150)); // wait for old task to cleanly exit
     }
@@ -373,6 +424,75 @@ void play_wav_file(const char *filepath) {
     char *path_copy = strdup(filepath);
     wav_playing = true;
     xTaskCreate(wav_play_task, "wav_play", 4096, path_copy, 5, &wav_task_handle);
+}
+
+static void synth_tone_task(void *arg) {
+    test_tone_config_t *config = (test_tone_config_t *)arg;
+    ESP_LOGI(TAG, "[Synth Task] Generating test tone:\n"
+                  "             * Waveform: %s\n"
+                  "             * Frequency: %lu Hz\n"
+                  "             * Sample Rate: %lu Hz\n"
+                  "             * Duration: %lu ms", 
+                  (config->wave_type == 0) ? "Sine" : "Square",
+                  config->frequency, config->sample_rate, config->duration_ms);
+
+    init_es8311_codec(config->sample_rate, 16);
+    init_i2s_audio(config->sample_rate, 1, 16);
+
+    uint32_t samples_needed = (config->sample_rate * config->duration_ms) / 1000;
+    size_t chunk_size = 512;
+    int16_t *buf = malloc(chunk_size * sizeof(int16_t));
+
+    if (buf) {
+        double increment = 2.0 * M_PI * config->frequency / config->sample_rate;
+        double x = 0;
+        uint32_t samples_written = 0;
+
+        while (wav_playing && samples_written < samples_needed) {
+            uint32_t to_write = (samples_needed - samples_written > chunk_size) ? chunk_size : (samples_needed - samples_written);
+            for (uint32_t i = 0; i < to_write; i++) {
+                if (config->wave_type == 0) { // Sine
+                    buf[i] = (int16_t)(sinf(x) * 16383.0); // 50% amplitude
+                } else { // Square
+                    buf[i] = (sinf(x) >= 0) ? 8192 : -8192;
+                }
+                x += increment;
+                if (x >= 2.0 * M_PI) {
+                    x -= 2.0 * M_PI;
+                }
+            }
+            size_t bytes_written = 0;
+            i2s_channel_write(tx_chan, buf, to_write * sizeof(int16_t), &bytes_written, portMAX_DELAY);
+            samples_written += to_write;
+        }
+        free(buf);
+    }
+
+    ESP_LOGI(TAG, "[Synth Task] Synthesized tone generation finished. Muting hardware PA.");
+    gpio_set_level(GPIO_NUM_46, 0); 
+    wav_playing = false;
+    free(config);
+    wav_task_handle = NULL;
+    vTaskDelete(NULL);
+}
+
+void play_synthesized_test_tone(uint8_t wave_type, uint32_t frequency) {
+    if (wav_playing) {
+        ESP_LOGI(TAG, "[Synth Task] Terminating existing audio task before starting test...");
+        wav_playing = false;
+        vTaskDelay(pdMS_TO_TICKS(150));
+    }
+
+    test_tone_config_t *config = malloc(sizeof(test_tone_config_t));
+    if (config) {
+        config->sample_rate = 16000;
+        config->frequency = frequency;
+        config->duration_ms = 2000;
+        config->wave_type = wave_type;
+
+        wav_playing = true;
+        xTaskCreate(synth_tone_task, "synth_task", 4096, config, 5, &wav_task_handle);
+    }
 }
 
 static void btn_delete_cb(lv_event_t *e) {
@@ -646,6 +766,15 @@ static void file_click_cb(lv_event_t *e) {
         return;
     }
 
+    // Intercept synthetic hardware check test paths
+    if (strcmp(path, "_TEST_SINE") == 0) {
+        play_synthesized_test_tone(0, 1000); // 1kHz Sine Wave
+        return;
+    } else if (strcmp(path, "_TEST_SQUARE") == 0) {
+        play_synthesized_test_tone(1, 440);  // 440Hz Square Wave
+        return;
+    }
+
     struct stat st;
     if (stat(path, &st) == 0) {
         if (S_ISDIR(st.st_mode)) {
@@ -673,83 +802,8 @@ static void refresh_directory_list(const char *path) {
     if (!file_list) return;
     lv_obj_clean(file_list);
 
-    DIR *dir = opendir(path);
-    if (dir == NULL) {
-        ESP_LOGE(TAG, "Failed to open directory: %s", path);
-        return;
-    }
-
-    if (strcmp(path, "/sdcard") != 0) {
-        lv_obj_t *btn = lv_list_add_button(file_list, LV_SYMBOL_DIRECTORY, ".. [Parent]");
-        lv_obj_add_event_cb(btn, file_click_cb, LV_EVENT_CLICKED, (void*)"..");
-    }
-
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        char full_path[300];
-        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
-
-        const char *symbol = LV_SYMBOL_FILE;
-        if (entry->d_type == DT_DIR) {
-            symbol = LV_SYMBOL_DIRECTORY; 
-        } else {
-            char *ext = strrchr(entry->d_name, '.');
-            if (ext) {
-                if (strcasecmp(ext, ".mp3") == 0 || strcasecmp(ext, ".wav") == 0) {
-                    symbol = LV_SYMBOL_AUDIO;
-                } else if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0 || 
-                           strcasecmp(ext, ".mjp") == 0 || strcasecmp(ext, ".mjpeg") == 0 ||
-                           strcasecmp(ext, ".png") == 0) {
-                    symbol = LV_SYMBOL_IMAGE;
-                }
-            }
-        }
-
-        lv_obj_t *btn = lv_list_add_button(file_list, symbol, entry->d_name);
-        char *allocated_path = strdup(full_path);
-        lv_obj_add_event_cb(btn, file_click_cb, LV_EVENT_CLICKED, (void*)allocated_path);
-        lv_obj_add_event_cb(btn, btn_delete_cb, LV_EVENT_DELETE, (void*)allocated_path);
-    }
-    closedir(dir);
-}
-
-void start_file_explorer(void) {
-    if (!mount_sd_card()) {
-        ESP_LOGE(TAG, "Could not launch File Explorer - No SD Card found.");
-        return;
-    }
-
-    if (explorer_container == NULL) {
-        explorer_container = lv_obj_create(tile_tools);
-        lv_obj_remove_style_all(explorer_container);
-        lv_obj_set_size(explorer_container, 410, 502);
-        lv_obj_set_style_bg_color(explorer_container, lv_color_black(), 0);
-        lv_obj_set_style_bg_opa(explorer_container, LV_OPA_COVER, 0);
-
-        file_list = lv_list_create(explorer_container);
-        lv_obj_set_size(file_list, 390, 440);
-        lv_obj_align(file_list, LV_ALIGN_TOP_MID, 0, 10);
-        lv_obj_set_style_bg_color(file_list, lv_color_black(), 0);
-        lv_obj_set_style_text_color(file_list, lv_color_white(), 0);
-
-        refresh_directory_list(current_dir);
-    } else {
-        lv_obj_remove_flag(explorer_container, LV_OBJ_FLAG_HIDDEN);
-        refresh_directory_list(current_dir);
-    }
-}
-
-void close_file_explorer(void) {
-    if (explorer_container != NULL) {
-        lv_obj_add_flag(explorer_container, LV_OBJ_FLAG_HIDDEN);
-    }
-}
-
-void stop_file_explorer_media(void) {
-    if (wav_playing) {
-        wav_playing = false;
-    }
-    if (mjpeg_playing) {
-        mjpeg_playing = false;
-    }
-}
+    // Provide immediate synthetic audio test options at the root level of explorer
+    if (strcmp(path, "/sdcard") == 0) {
+        ESP_LOGI(TAG, "[UI] Displaying virtual diagnostics channels on root layout");
+        lv_obj_t *btn_test_sine = lv_list_add_button(file_list, LV_SYMBOL_AUDIO, " [TEST] Sine 1000Hz (16kHz Mono)");
+        lv_o
