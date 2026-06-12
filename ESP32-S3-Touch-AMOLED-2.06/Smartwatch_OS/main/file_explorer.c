@@ -488,8 +488,7 @@ static void mjpeg_play_task(void *arg) {
                     .len = frame_len,
                     .offset = 0,
                     .out_buf = (uint16_t *)mjpeg_canvas_buf,
-                    .out_width = CAM_WIDTH,
-                    .out_height = CAM_HEIGHT
+                    .out_width = CAM_WIDTH
                 };
 
                 if (jd_prepare(&jd, jpg_input_func, work_buf, 3100, &dec) == JDR_OK) {

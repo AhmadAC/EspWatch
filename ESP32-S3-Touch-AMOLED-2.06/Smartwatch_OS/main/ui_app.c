@@ -41,7 +41,7 @@ static lv_obj_t * tile_launcher;
 static lv_obj_t * tile_clock;
 static lv_obj_t * tile_settings;
 static lv_obj_t * tile_camera;
-static lv_obj_t * tile_tools;
+lv_obj_t * tile_tools;
 
 static lv_obj_t * label_clock_hours;
 static lv_obj_t * label_clock_minutes;
@@ -50,7 +50,7 @@ static lv_obj_t * lbl_wifi;
 static lv_obj_t * btn_wifi_toggle;
 static lv_obj_t * lbl_wifi_toggle;
 static lv_obj_t * reboot_overlay = NULL;
-static lv_obj_t * canvas = NULL;
+lv_obj_t * canvas = NULL;
 static lv_obj_t * lbl_cam_status = NULL;
 
 void action_open_clock(lv_event_t * e) {
@@ -347,17 +347,17 @@ void build_ui(void) {
         lv_obj_set_style_bg_opa(objects.main, LV_OPA_TRANSP, LV_PART_MAIN);
         lv_obj_set_style_border_width(objects.main, 0, LV_PART_MAIN);
 
-        if (objects.app_settings_2 != NULL) {
-            lv_obj_set_style_bg_opa(objects.app_settings_2, LV_OPA_TRANSP, LV_PART_MAIN);
-            lv_obj_set_style_border_width(objects.app_settings_2, 0, LV_PART_MAIN);
+        if (objects.app_settings_icon_2 != NULL) {
+            lv_obj_set_style_bg_opa(objects.app_settings_icon_2, LV_OPA_TRANSP, LV_PART_MAIN);
+            lv_obj_set_style_border_width(objects.app_settings_icon_2, 0, LV_PART_MAIN);
         }
         if (objects.obj0 != NULL) {
             lv_obj_set_style_bg_opa(objects.obj0, LV_OPA_TRANSP, LV_PART_MAIN);
             lv_obj_set_style_border_width(objects.obj0, 0, LV_PART_MAIN);
         }
-        if (objects.obj0__app_settings_1 != NULL) {
-            lv_obj_set_style_bg_opa(objects.obj0__app_settings_1, LV_OPA_TRANSP, LV_PART_MAIN);
-            lv_obj_set_style_border_width(objects.obj0__app_settings_1, 0, LV_PART_MAIN);
+        if (objects.obj0__app_settings_icon_1 != NULL) {
+            lv_obj_set_style_bg_opa(objects.obj0__app_settings_icon_1, LV_OPA_TRANSP, LV_PART_MAIN);
+            lv_obj_set_style_border_width(objects.obj0__app_settings_icon_1, 0, LV_PART_MAIN);
         }
 
         uint32_t child_cnt = lv_obj_get_child_count(objects.main);
