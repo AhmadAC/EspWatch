@@ -2,6 +2,7 @@
 #include "esp_wifi.h"
 #include "esp_now.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
@@ -63,18 +64,21 @@ unsigned int jpg_output_func(JDEC *jd, void *bitmap, JRECT *rect) {
 static void handle_incoming_chunk(uint16_t idx, uint16_t total, uint16_t len, uint8_t *data) {
     if (!frame_reassembly_buf) {
         frame_reassembly_buf = heap_caps_malloc(128 * 1024, MALLOC_CAP_SPIRAM);
-        received_chunks_map = calloc(100, sizeof(bool));
         latest_frame_buffer = heap_caps_malloc(128 * 1024, MALLOC_CAP_SPIRAM);
         canvas_buffer = heap_caps_malloc(CAM_WIDTH * CAM_HEIGHT * 2, MALLOC_CAP_SPIRAM);
     }
 
+    // Safely reallocate and clear map based on the new total to prevent Out-Of-Bounds memory faults
     if (total != expected_chunks || idx >= total) {
         expected_chunks = total;
         chunks_received = 0;
-        memset(received_chunks_map, 0, 100 * sizeof(bool));
+        if (received_chunks_map) {
+            free(received_chunks_map);
+        }
+        received_chunks_map = calloc(total > 0 ? total : 100, sizeof(bool));
     }
 
-    if (!received_chunks_map[idx]) {
+    if (received_chunks_map && idx < expected_chunks && !received_chunks_map[idx]) {
         received_chunks_map[idx] = true;
         chunks_received++;
 
@@ -85,9 +89,11 @@ static void handle_incoming_chunk(uint16_t idx, uint16_t total, uint16_t len, ui
 
         if (chunks_received == total) {
             uint32_t total_len = (total - 1) * 1300 + len;
-            memcpy(latest_frame_buffer, frame_reassembly_buf, total_len);
-            latest_frame_len = total_len;
-            new_frame_ready = true;
+            if (total_len <= 128 * 1024) {
+                memcpy(latest_frame_buffer, frame_reassembly_buf, total_len);
+                latest_frame_len = total_len;
+                new_frame_ready = true;
+            }
         }
     }
 }

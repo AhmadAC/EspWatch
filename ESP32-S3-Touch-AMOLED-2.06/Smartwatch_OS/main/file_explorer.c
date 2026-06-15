@@ -7,6 +7,7 @@
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "bsp/esp-bsp.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -596,8 +597,14 @@ void play_synthesized_test_tone(uint8_t wave_type, uint32_t frequency) {
 
 static void btn_delete_cb(lv_event_t *e) {
     void *user_data = lv_event_get_user_data(e);
-    if (user_data && strcmp((char*)user_data, "..") != 0) {
-        free(user_data);
+    if (user_data) {
+        const char *str = (const char *)user_data;
+        // Strictly protect static literals from being passed to free() and causing panic aborts
+        if (strcmp(str, "..") != 0 &&
+            strcmp(str, "_TEST_SINE") != 0 &&
+            strcmp(str, "_TEST_SQUARE") != 0) {
+            free(user_data);
+        }
     }
 }
 
@@ -612,7 +619,7 @@ static void view_text_file(const char *filepath) {
     FILE *f = fopen(filepath, "r");
     if (!f) return;
 
-    char *buf = malloc(4096);
+    char *buf = heap_caps_malloc(4096, MALLOC_CAP_SPIRAM);
     if (!buf) {
         fclose(f);
         return;
@@ -668,8 +675,8 @@ static void mjpeg_play_task(void *arg) {
     }
 
     size_t temp_buf_size = 64 * 1024;
-    uint8_t *frame_buf = malloc(temp_buf_size);
-    uint8_t *work_buf = malloc(3100);
+    uint8_t *frame_buf = heap_caps_malloc(temp_buf_size, MALLOC_CAP_SPIRAM);
+    uint8_t *work_buf = heap_caps_malloc(3100, MALLOC_CAP_SPIRAM);
 
     if (frame_buf && work_buf) {
         while (mjpeg_playing) {
@@ -787,6 +794,20 @@ static void view_mjpeg_file(const char *filepath) {
     xTaskCreate(mjpeg_play_task, "mjpeg_play", 8192, path_copy, 5, &mjpeg_task_handle);
 }
 
+static void img_viewer_delete_cb(lv_event_t *e) {
+    void *img_data = lv_event_get_user_data(e);
+    if (img_data) {
+        free(img_data);
+    }
+}
+
+static void img_dsc_delete_cb(lv_event_t *e) {
+    void *img_dsc = lv_event_get_user_data(e);
+    if (img_dsc) {
+        free(img_dsc);
+    }
+}
+
 static void view_image_file(const char *filepath) {
     FILE *f = fopen(filepath, "rb");
     if (!f) return;
@@ -795,7 +816,8 @@ static void view_image_file(const char *filepath) {
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
 
-    uint8_t *img_data = malloc(size);
+    // Secure SPIRAM heap allocation to prevent heap exhaustion on large image reads
+    uint8_t *img_data = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
     if (!img_data) {
         fclose(f);
         return;
@@ -810,12 +832,11 @@ static void view_image_file(const char *filepath) {
     lv_obj_center(img_viewer);
     lv_obj_move_foreground(img_viewer);
 
-    // Make the entire background of the viewer clickable to close it
     lv_obj_add_flag(img_viewer, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(img_viewer, close_img_viewer_cb, LV_EVENT_CLICKED, NULL);
 
-    // Automatically clean up dynamically allocated image source buffer when the viewer is closed
-    lv_obj_add_event_cb(img_viewer, btn_delete_cb, LV_EVENT_DELETE, (void*)img_data);
+    // Register precise image data clean-up handler to completely stop memory leaks
+    lv_obj_add_event_cb(img_viewer, img_viewer_delete_cb, LV_EVENT_DELETE, (void*)img_data);
 
     const char *ext = strrchr(filepath, '.');
     bool is_png = (ext && strcasecmp(ext, ".png") == 0);
@@ -840,12 +861,11 @@ static void view_image_file(const char *filepath) {
             lv_image_set_src(img, img_dsc);
             lv_obj_center(img);
             
-            // Also make the image itself clickable to close the viewer
             lv_obj_add_flag(img, LV_OBJ_FLAG_CLICKABLE);
             lv_obj_add_event_cb(img, close_img_viewer_cb, LV_EVENT_CLICKED, NULL);
             
-            // Clean up the image descriptor structure when the image widget is deleted
-            lv_obj_add_event_cb(img, btn_delete_cb, LV_EVENT_DELETE, (void*)img_dsc);
+            // Register precise image descriptor clean-up handler
+            lv_obj_add_event_cb(img, img_dsc_delete_cb, LV_EVENT_DELETE, (void*)img_dsc);
         }
     }
 }
@@ -865,7 +885,6 @@ static void file_click_cb(lv_event_t *e) {
         return;
     }
 
-    // Intercept synthetic hardware check test paths
     if (strcmp(path, "_TEST_SINE") == 0) {
         play_synthesized_test_tone(0, 1000); // 1kHz Sine Wave
         return;
@@ -901,7 +920,6 @@ static void refresh_directory_list(const char *path) {
     if (!file_list) return;
     lv_obj_clean(file_list);
 
-    // Provide immediate synthetic audio test options at the root level of explorer
     if (strcmp(path, "/sdcard") == 0) {
         ESP_LOGI(TAG, "[UI] Displaying virtual diagnostics channels on root layout");
         lv_obj_t *btn_test_sine = lv_list_add_button(file_list, LV_SYMBOL_AUDIO, " [TEST] Sine 1000Hz (16kHz Mono)");
