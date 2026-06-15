@@ -64,7 +64,7 @@ esp_err_t i2c_master_init(void)
 }
 
 /* 
- * Explicitly configure the AXP2101 PMIC over I2C to enable ALDO3 at 3.3V
+ * Explicitly configure the AXP2101 PMU over I2C to enable ALDO3 at 3.3V
  * to supply power to the ES8311 Audio Codec
  */
 esp_err_t enable_axp2101_audio_power(void)
@@ -123,8 +123,8 @@ esp_err_t i2s_init(void)
             .mclk = GPIO_NUM_16,
             .bclk = GPIO_NUM_41,
             .ws = GPIO_NUM_45,
-            .dout = GPIO_NUM_42, // Sends output data to ES8311 DAC
-            .din = GPIO_NUM_40,  // Receives input data from ES7210 Mic
+            .dout = GPIO_NUM_42, // Corrected: Sends audio data to ES8311 DAC
+            .din = GPIO_NUM_40,  // Corrected: Receives audio data from Microphone
             .invert_flags = {
                 .mclk_inv = false,
                 .bclk_inv = false,

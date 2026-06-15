@@ -48,47 +48,7 @@ jobs:
                 sed -i 's/CONFIG_\([A-Za-z0-9_]*\) \([-0-9A-Za-z_]*\)/CONFIG_\1=\2/g' sdkconfig.defaults
             fi
             
-            # ======================================================
-            # HOTFIX 1: Replace unsupported enums with safe equivalent values
-            # ======================================================
-            disp_port_file="managed_components/espressif__esp_lvgl_port/src/lvgl9/esp_gl_port_disp.c"
-            disp_port_file_alt="managed_components/espressif__esp_lvgl_port/src/lvgl9/esp_lvgl_port_disp.c"
-            if [ -f "$disp_port_file_alt" ]; then
-                disp_port_file="$disp_port_file_alt"
-            fi
-            
-            if [ -f "$disp_port_file" ]; then
-                echo "Applying C-level token replacement hotfix..."
-                sed -i 's/LV_COLOR_FORMAT_RGB565_SWAPPED/LV_COLOR_FORMAT_RGB565/g' "$disp_port_file"
-                sed -i 's/LV_COLOR_FORMAT_XRGB8888/LV_COLOR_FORMAT_RGB888/g' "$disp_port_file"
-            fi
-            # ======================================================
-            
-            # ======================================================
-            # COMPATIBILITY HOTFIX: Create <lvgl/lvgl.h> non-recursive redirect header
-            # ======================================================
-            echo "Creating non-recursive compatibility redirect header..."
-            mkdir -p "apps/my_eez_ui/lvgl"
-            echo '#ifndef COMPAT_LVGL_REDIRECT_H' > "apps/my_eez_ui/lvgl/lvgl.h"
-            echo '#define COMPAT_LVGL_REDIRECT_H' >> "apps/my_eez_ui/lvgl/lvgl.h"
-            echo '#include "../../../managed_components/lvgl__lvgl/lvgl.h"' >> "apps/my_eez_ui/lvgl/lvgl.h"
-            echo '#endif' >> "apps/my_eez_ui/lvgl/lvgl.h"
-            # ======================================================
-
-            # ======================================================
-            # HOTFIX 3: Fix EEZ Studio CMakeLists.txt Dependencies
-            # ======================================================
-            eez_cmake="apps/my_eez_ui/CMakeLists.txt"
-            if [ -f "$eez_cmake" ]; then
-                echo "Patching EEZ Studio CMakeLists.txt dependencies..."
-                # Promote LVGL from Private to Public requirement
-                sed -i 's/PRIV_REQUIRES/REQUIRES/g' "$eez_cmake"
-                # Strip out the unused and broken brookesia requirement
-                sed -i 's/espressif__esp-brookesia//g' "$eez_cmake"
-            fi
-            # ======================================================
-
-            # Set the target chip to ESP32-S3 (This runs CMake and MUST happen AFTER hotfixes are applied)
+            # Set the target chip to ESP32-S3 (This runs CMake)
             idf.py set-target esp32s3
             
             # Compile the project
@@ -127,6 +87,7 @@ jobs:
             echo "Error: Directory $proj_dir does not exist or is missing CMakeLists.txt!"
             exit 1
           fi
+          
       - name: Upload ESP-IDF Compiled Binaries
         uses: actions/upload-artifact@v4
         with:
