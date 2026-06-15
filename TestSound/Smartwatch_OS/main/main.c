@@ -18,7 +18,7 @@
 #include "es8311.h"
 
 #define EXAMPLE_SAMPLE_RATE     16000
-#define EXAMPLE_VOICE_VOLUME    85 // 0 - 100
+#define EXAMPLE_VOICE_VOLUME    100 // Set to 100 for maximum volume boost (writes 0xFF)
 #define EXAMPLE_MIC_GAIN        ES8311_MIC_GAIN_18DB
 
 #define I2C_PORT_NUM            I2C_NUM_0
@@ -63,6 +63,53 @@ esp_err_t i2c_master_init(void)
     return i2c_new_master_bus(&bus_config, &i2c_bus_handle);
 }
 
+/* 
+ * Explicitly configure the AXP2101 PMIC over I2C to enable ALDO3 at 3.3V
+ * to supply power to the ES8311 Audio Codec
+ */
+esp_err_t enable_axp2101_audio_power(void)
+{
+    i2c_device_config_t pmu_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = 0x34, // AXP2101 default I2C address
+        .scl_speed_hz = 100000,
+    };
+    i2c_master_dev_handle_t pmu_dev;
+    esp_err_t ret = i2c_master_bus_add_device(i2c_bus_handle, &pmu_cfg, &pmu_dev);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "AXP2101 may already be registered or not found: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    // Set ALDO3 to 3.3V (0x1C corresponds to 3.3V, range 0.5V-3.5V, 100mV/step)
+    uint8_t write_vol[2] = {0x94, 0x1C};
+    ret = i2c_master_transmit(pmu_dev, write_vol, sizeof(write_vol), 1000);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set ALDO3 voltage");
+    }
+
+    // Read current LDOS ON/OFF control (Register 0x90)
+    uint8_t reg_90_addr = 0x90;
+    uint8_t reg_90_val = 0;
+    ret = i2c_master_transmit_receive(pmu_dev, &reg_90_addr, 1, &reg_90_val, 1, 1000);
+    if (ret == ESP_OK) {
+        // Enable ALDO3 (Bit 2)
+        reg_90_val |= (1 << 2); 
+        uint8_t write_en[2] = {0x90, reg_90_val};
+        ret = i2c_master_transmit(pmu_dev, write_en, sizeof(write_en), 1000);
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "AXP2101 ALDO3 (Audio Codec Power) enabled successfully");
+        } else {
+            ESP_LOGE(TAG, "Failed to write Reg 0x90 to enable ALDO3");
+        }
+    } else {
+        ESP_LOGE(TAG, "Failed to read Reg 0x90");
+    }
+
+    i2c_master_bus_remove_device(pmu_dev);
+    return ret;
+}
+
 esp_err_t i2s_init(void)
 {
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
@@ -76,8 +123,8 @@ esp_err_t i2s_init(void)
             .mclk = GPIO_NUM_16,
             .bclk = GPIO_NUM_41,
             .ws = GPIO_NUM_45,
-            .dout = GPIO_NUM_42, // Corrected: Sends audio data to ES8311 DAC
-            .din = GPIO_NUM_40,  // Corrected: Receives audio data from Microphone
+            .dout = GPIO_NUM_42, // Sends output data to ES8311 DAC
+            .din = GPIO_NUM_40,  // Receives input data from ES7210 Mic
             .invert_flags = {
                 .mclk_inv = false,
                 .bclk_inv = false,
@@ -97,18 +144,6 @@ esp_err_t i2s_init(void)
 }
 
 esp_err_t es8311_codec_init(void) {
-    i2c_device_config_t dev_cfg = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = ES8311_ADDRRES_0,
-        .scl_speed_hz = 100000,
-    };
-
-    esp_err_t ret = i2c_master_bus_add_device(i2c_bus_handle, &dev_cfg, &es8311_dev_handle);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to register ES8311 device on I2C bus");
-        return ret;
-    }
-
     es8311_handle_t es_handle = es8311_create(es8311_dev_handle);
     ESP_RETURN_ON_FALSE(es_handle, ESP_FAIL, TAG, "es8311 create failed");
     
@@ -141,10 +176,10 @@ static void play_sine_tone(int frequency_hz, int duration_ms)
     for (int i = 0; i < samples_count; i++) {
         double t = (double)i / EXAMPLE_SAMPLE_RATE;
         double val = sin(2.0 * M_PI * frequency_hz * t);
-        int16_t sample = (int16_t)(val * 12000.0); // comfortable volume level
+        int16_t sample = (int16_t)(val * 30000.0); // Boosted signal amplitude close to 16-bit maximum (32767)
 
-        sine_buffer[i * 2] = sample;     // Left
-        sine_buffer[i * 2 + 1] = sample; // Right
+        sine_buffer[i * 2] = sample;     // Left Channel
+        sine_buffer[i * 2 + 1] = sample; // Right Channel
     }
 
     size_t bytes_written = 0;
@@ -210,7 +245,13 @@ void app_main(void)
     }
     ESP_LOGI(TAG, "I2C initialized successfully (SDA=15, SCL=14)");
 
-    // 3. Initialize I2S Bus (Full-Duplex Standard Mode)
+    // 3. Configure the PMU to turn on the codec and amplifier voltage rail
+    ret = enable_axp2101_audio_power();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure AXP2101 PMU audio power rail");
+    }
+
+    // 4. Initialize I2S Bus (Full-Duplex Standard Mode)
     ret = i2s_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "I2S initialization failed: %s", esp_err_to_name(ret));
@@ -218,7 +259,18 @@ void app_main(void)
     }
     ESP_LOGI(TAG, "I2S initialized successfully (BCLK=41, WS=45, DOUT=42, DIN=40, MCLK=16)");
 
-    // 4. Initialize ES8311 Audio Codec
+    // 5. Initialize ES8311 Audio Codec
+    i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = ES8311_ADDRRES_0,
+        .scl_speed_hz = 100000,
+    };
+    ret = i2c_master_bus_add_device(i2c_bus_handle, &dev_cfg, &es8311_dev_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register ES8311 device on I2C bus");
+        return;
+    }
+
     ret = es8311_codec_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "ES8311 codec initialization failed: %s", esp_err_to_name(ret));
@@ -226,9 +278,9 @@ void app_main(void)
     }
     ESP_LOGI(TAG, "ES8311 codec initialized successfully");
 
-    // 5. Play startup chime sound to confirm speaker output works flawlessly
+    // 6. Play startup chime sound to confirm speaker output works flawlessly
     play_startup_chime();
 
-    // 6. Create background FreeRTOS task for real-time mic-to-speaker echo loopback
+    // 7. Create background FreeRTOS task for real-time mic-to-speaker echo loopback
     xTaskCreate(audio_echo_task, "audio_echo_task", 4096, NULL, 5, NULL);
 }
