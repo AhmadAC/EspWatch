@@ -76,8 +76,8 @@ esp_err_t i2s_init(void)
             .mclk = GPIO_NUM_16,
             .bclk = GPIO_NUM_41,
             .ws = GPIO_NUM_45,
-            .dout = GPIO_NUM_40,
-            .din = GPIO_NUM_42,
+            .dout = GPIO_NUM_42, // Corrected: Sends audio data to ES8311 DAC
+            .din = GPIO_NUM_40,  // Corrected: Receives audio data from Microphone
             .invert_flags = {
                 .mclk_inv = false,
                 .bclk_inv = false,
@@ -216,7 +216,7 @@ void app_main(void)
         ESP_LOGE(TAG, "I2S initialization failed: %s", esp_err_to_name(ret));
         return;
     }
-    ESP_LOGI(TAG, "I2S initialized successfully (BCLK=41, WS=45, DOUT=40, DIN=42, MCLK=16)");
+    ESP_LOGI(TAG, "I2S initialized successfully (BCLK=41, WS=45, DOUT=42, DIN=40, MCLK=16)");
 
     // 4. Initialize ES8311 Audio Codec
     ret = es8311_codec_init();
