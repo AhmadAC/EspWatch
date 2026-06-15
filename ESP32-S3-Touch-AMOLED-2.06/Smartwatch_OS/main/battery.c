@@ -5,26 +5,6 @@
 static const char *TAG = "BATTERY_DRV";
 static i2c_master_dev_handle_t axp_handle = NULL;
 
-typedef struct {
-    float voltage;
-    float percentage;
-} lut_point_t;
-
-static const lut_point_t lipo_lut[] = {
-    {4.18f, 100.0f},
-    {4.10f, 90.0f},
-    {4.00f, 80.0f},
-    {3.90f, 65.0f},
-    {3.82f, 50.0f},
-    {3.77f, 40.0f},
-    {3.73f, 30.0f},
-    {3.70f, 20.0f},
-    {3.65f, 10.0f},
-    {3.55f, 5.0f},
-    {3.30f, 0.0f}
-};
-#define LUT_SIZE (sizeof(lipo_lut) / sizeof(lipo_lut[0]))
-
 static inline bool axp_write(uint8_t reg, uint8_t val) {
     if (!axp_handle) return false;
     uint8_t data[2] = { reg, val };
@@ -52,17 +32,27 @@ bool axp2101_init_pmu(i2c_master_bus_handle_t bus) {
     }
 
     uint8_t reg_val;
+    
+    // Enable Fuel Gauge (Bit 3) and Main Battery Charging (Bit 1)
     if (axp_read(0x18, &reg_val)) {
-        axp_write(0x18, reg_val | 0x08);
+        axp_write(0x18, reg_val | 0x08 | 0x02);
         ESP_LOGI(TAG, "AXP2101 initialized and Fuel Gauge enabled!");
     } else {
         ESP_LOGW(TAG, "AXP2101 not responding at address 0x34");
         return false;
     }
 
-    // Apply configuration parameters sourced from XPowersLib
-    
-    // Disable unused power channels (DC2, DC3, DC4, DC5)
+    // Explicitly Enable Hardware Battery Detection
+    if (axp_read(0x68, &reg_val)) {
+        axp_write(0x68, reg_val | 0x01);
+    }
+
+    // Bypass TS (Thermistor) Pin - Forces PMU to ignore missing temperature sensor
+    if (axp_read(0x50, &reg_val)) {
+        axp_write(0x50, reg_val | (1 << 4)); // Bit 4: 1 = external fixed input, ignores charger
+    }
+
+    // Disable unused DCDC power channels (DC2, DC3, DC4, DC5)
     if (axp_read(0x80, &reg_val)) {
         reg_val &= ~(0x1E); 
         axp_write(0x80, reg_val);
@@ -92,10 +82,10 @@ bool axp2101_init_pmu(i2c_master_bus_handle_t bus) {
         axp_write(0x90, reg_val | 0x01);
     }
 
-    // Enable ADCs (VBUS, BATT, SYS, TEMP) but disable TS pin
+    // Enable ADCs: General (5), TEMP (4), SYS (3), VBUS (2), BATT (0). Disable TS ADC (1).
     if (axp_read(0x30, &reg_val)) {
-        reg_val |= (1 << 2) | (1 << 0) | (1 << 3) | (1 << 4);
-        reg_val &= ~(1 << 1); // Disable TS pin
+        reg_val |= (1 << 5) | (1 << 4) | (1 << 3) | (1 << 2) | (1 << 0);
+        reg_val &= ~(1 << 1); 
         axp_write(0x30, reg_val);
     }
 
@@ -113,24 +103,24 @@ bool axp2101_init_pmu(i2c_master_bus_handle_t bus) {
     axp_write(0x41, (1 << 5) | (1 << 4) | (1 << 7) | (1 << 6) | (1 << 3) | (1 << 2));
     axp_write(0x42, (1 << 4) | (1 << 3));
 
-    // Set precharge current to 50mA
+    // Set precharge current to 50mA (Bit 3:0, 25mA steps -> 2 * 25 = 50)
     if (axp_read(0x61, &reg_val)) {
-        axp_write(0x61, (reg_val & 0xFC) | 0x02);
+        axp_write(0x61, (reg_val & 0xF0) | 0x02);
     }
 
-    // Set constant charge current to 400mA
+    // Set constant charge current to 400mA (Bit 4:0, 10 -> 400mA)
     if (axp_read(0x62, &reg_val)) {
-        axp_write(0x62, (reg_val & 0xE0) | 0x07);
+        axp_write(0x62, (reg_val & 0xE0) | 0x0A);
     }
 
-    // Set termination current to 25mA
+    // Set termination current to 25mA (Bit 3:0, 1 * 25 = 25mA)
     if (axp_read(0x63, &reg_val)) {
         axp_write(0x63, (reg_val & 0xF0) | 0x01);
     }
 
-    // Set charge target voltage to 4.2V
+    // Set charge target voltage to 4.2V (Bits 2:0, 011 = 4.2V)
     if (axp_read(0x64, &reg_val)) {
-        axp_write(0x64, (reg_val & 0xFC) | 0x02);
+        axp_write(0x64, (reg_val & 0xF8) | 0x03);
     }
 
     return true;
@@ -141,17 +131,24 @@ float axp2101_get_voltage(void) {
     if (!axp_read(0x34, &hi)) return 0.0f; // AXP2101_REG_VBAT_H
     if (!axp_read(0x35, &lo)) return 0.0f; // AXP2101_REG_VBAT_L
     
-    // AXP2101 ADC is 13-bit for Battery Voltage: High 5 bits in 0x34, Low 8 bits in 0x35
-    uint16_t raw = ((hi & 0x1F) << 8) | lo;
+    // AXP2101 ADC is 14-bit: High 6 bits in 0x34, Low 8 bits in 0x35
+    // Mask 0x3F captures all 6 high bits without dropping data
+    uint16_t raw = ((hi & 0x3F) << 8) | lo;
     
     // 1 LSB = 1 mV
     return raw / 1000.0f;
 }
 
 bool axp2101_is_battery_present(void) {
-    // Fallback to strict voltage check because the AXP internal status bit is notoriously 
-    // flaky if the NTC/TS pin on the battery is unpopulated or floating.
-    return axp2101_get_voltage() > 2.5f;
+    uint8_t status = 0;
+    // Safest method: Check the PMU's dedicated hardware Battery Present bit
+    if (axp_read(0x00, &status)) {
+        if ((status & 0x08) == 0) { // Bit 3 is 0 if battery is removed
+            return false;
+        }
+    }
+    // Fallback: Make sure voltage isn't 0.0V
+    return axp2101_get_voltage() > 2.0f;
 }
 
 bool axp2101_is_charging(void) {
@@ -198,34 +195,14 @@ uint8_t axp2101_get_internal_percentage(void) {
     return 0;
 }
 
-static float interpolate_percentage(float voltage) {
-    if (voltage >= lipo_lut[0].voltage) return 100.0f;
-    if (voltage <= lipo_lut[LUT_SIZE - 1].voltage) return 0.0f;
-    
-    for (int i = 0; i < LUT_SIZE - 1; i++) {
-        if (voltage <= lipo_lut[i].voltage && voltage >= lipo_lut[i + 1].voltage) {
-            float v0 = lipo_lut[i + 1].voltage;
-            float v1 = lipo_lut[i].voltage;
-            float p0 = lipo_lut[i + 1].percentage;
-            float p1 = lipo_lut[i].percentage;
-            
-            return p0 + (voltage - v0) * (p1 - p0) / (v1 - v0);
-        }
-    }
-    return 0.0f;
-}
-
 void battery_update(battery_tracker_t *tracker, float *out_voltage, float *out_percentage) {
-    if (!axp2101_is_battery_present()) {
-        *out_voltage = 0.0f;
-        *out_percentage = 0.0f;
-        return;
-    }
-    
     float raw_voltage = axp2101_get_voltage();
-    if (raw_voltage < 2.0f) { // Sanity check for faulty reading
+    
+    // Check hardware status to gracefully handle physical disconnection
+    if (!axp2101_is_battery_present() || raw_voltage < 2.0f) {
         *out_voltage = 0.0f;
         *out_percentage = 0.0f;
+        ESP_LOGD(TAG, "[BATTERY DEBUG] Hardware indicates battery is absent or dead (%.3fV).", raw_voltage);
         return;
     }
     
@@ -240,12 +217,11 @@ void battery_update(battery_tracker_t *tracker, float *out_voltage, float *out_p
     
     *out_voltage = tracker->filtered_voltage;
     
-    // 2. Dual-mode calculation depending on charging state
-    if (axp2101_is_charging()) {
-        // Fall back directly to the AXP2101's internal Coulomb Counter register during charge
-        *out_percentage = (float)axp2101_get_internal_percentage();
-    } else {
-        // Map heavily filtered voltage on the LUT while discharging
-        *out_percentage = interpolate_percentage(tracker->filtered_voltage);
-    }
+    // 2. ALWAYS use the AXP2101's internal Coulomb Counter (Fuel Gauge)
+    uint8_t soc = axp2101_get_internal_percentage();
+    *out_percentage = (float)soc;
+    
+    // DEBUG: Print to the Serial Monitor every 5 seconds so we can verify the hardware works!
+    ESP_LOGI(TAG, "[BATTERY DEBUG] Raw: %.3fV | Filtered: %.3fV | SOC: %d%% | Charging: %s", 
+             raw_voltage, tracker->filtered_voltage, soc, axp2101_is_charging() ? "YES" : "NO");
 }
