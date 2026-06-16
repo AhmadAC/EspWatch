@@ -357,8 +357,8 @@ void init_i2s_audio(uint32_t sample_rate, uint16_t num_channels, uint16_t bits_p
                   "             * MCLK  -> GPIO 16\n"
                   "             * BCLK  -> GPIO 41\n"
                   "             * LRCK  -> GPIO 45\n"
-                  "             * DOUT  -> GPIO 42 (Sends output data to ES8311 DAC)\n"
-                  "             * DIN   -> GPIO 40 (Receives input data from ES7210 Mic)");
+                  "             * DOUT  -> GPIO 40 (Sends output data to ES8311 DAC)\n"
+                  "             * DIN   -> GPIO 42 (Receives input data from ES7210 Mic)");
 
     i2s_std_config_t std_cfg = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate),
@@ -367,8 +367,8 @@ void init_i2s_audio(uint32_t sample_rate, uint16_t num_channels, uint16_t bits_p
             .mclk = GPIO_NUM_16,
             .bclk = GPIO_NUM_41,
             .ws = GPIO_NUM_45,
-            .dout = GPIO_NUM_42, 
-            .din = GPIO_NUM_40,  
+            .dout = GPIO_NUM_40, 
+            .din = GPIO_NUM_42,  
             .invert_flags = {
                 .mclk_inv = false,
                 .bclk_inv = false,

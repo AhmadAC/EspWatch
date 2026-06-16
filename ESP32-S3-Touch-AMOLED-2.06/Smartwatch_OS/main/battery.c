@@ -74,12 +74,19 @@ bool axp2101_init_pmu(i2c_master_bus_handle_t bus) {
         axp_write(0x80, reg_val | 0x01);
     }
 
-    // Set ALDO1 Voltage to 3300mV and enable it
+    // Set ALDO1 Voltage to 3300mV
     if (axp_read(0x92, &reg_val)) {
         axp_write(0x92, (reg_val & 0xE0) | 0x1C); // (3300-500)/100 = 28 = 0x1C
     }
+    
+    // Set ALDO3 Voltage to 3300mV (for ES8311 Audio Codec)
+    if (axp_read(0x94, &reg_val)) {
+        axp_write(0x94, (reg_val & 0xE0) | 0x1C); // 3.3V
+    }
+
     if (axp_read(0x90, &reg_val)) {
-        axp_write(0x90, reg_val | 0x01);
+        // Enable ALDO1 (bit 0) and ALDO3 (bit 2)
+        axp_write(0x90, reg_val | 0x01 | 0x04);
     }
 
     // Enable ADCs: General (5), TEMP (4), SYS (3), VBUS (2), BATT (0). Disable TS ADC (1).
