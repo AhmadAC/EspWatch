@@ -13,23 +13,19 @@
 #include "ui_app.h"
 #include "wifi_app.h"
 
+// Include your EEZ Studio generated screen headers to access the global "objects" struct
+#include "screens.h"
+
 static const char *TAG = "SmartwatchOS";
 static const char *NET_TAG = "Watch_Receiver";
 
 #define WIFI_CHANNEL 1
 #define PACKET_MAGIC 0xCAFEBABE
-#define MAX_JPEG_SIZE (64 * 1024) // 64KB limit for incoming MJPEG frames
+#define MAX_JPEG_SIZE (64 * 1024) // 64KB limit for incoming stream frames
 #define CHUNK_SIZE 1000
 
 // ==============================================================================
-// 1. External UI Widget reference from your EEZ Studio export
-// ==============================================================================
-// Check your generated "apps/my_eez_ui/ui.h" for the exact variable name.
-// If your image widget is named differently (e.g., ui_Image1), change this name:
-extern lv_obj_t *ui_image_cam; 
-
-// ==============================================================================
-// 2. Protocol Buffers & Structs
+// Protocol Buffers & Structs
 // ==============================================================================
 typedef struct {
     uint8_t frame_control[2];
@@ -62,19 +58,19 @@ static uint16_t last_frame_id = 9999;
 static uint8_t robot_mac[6] = {0};
 static volatile bool is_paired = false;
 
-// Dynamic LVGL Image Descriptor
+// Dynamic LVGL Image Descriptor pointing to our live-decoded camera feed [1]
 static lv_img_dsc_t dynamic_camera_dsc = {
     .header.cf = LV_IMG_CF_TRUE_COLOR, // RGB565 format
     .header.always_zero = 0,
     .header.reserved = 0,
-    .header.w = 320,  // Match OV3660 camera horizontal resolution
-    .header.h = 240,  // Match OV3660 camera vertical resolution
+    .header.w = 320,  // Match OV3660 camera width
+    .header.h = 240,  // Match OV3660 camera height
     .data_size = 320 * 240 * 2,
     .data = NULL
 };
 
 // ==============================================================================
-// 3. Wi-Fi Raw Packet Callback
+// Wi-Fi Raw Packet Callback
 // ==============================================================================
 static void wifi_promiscuous_rx_callback(void* buf, wifi_promiscuous_pkt_type_t type) {
     if (type != WIFI_PKT_DATA) return;
@@ -110,7 +106,7 @@ static void wifi_promiscuous_rx_callback(void* buf, wifi_promiscuous_pkt_type_t 
 }
 
 // ==============================================================================
-// 4. ESP-NOW Receiver Callback
+// ESP-NOW Receiver Callback
 // ==============================================================================
 static void on_esp_now_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len) {
     if (len == sizeof(pairing_packet_t)) {
@@ -137,10 +133,10 @@ static void on_esp_now_recv_cb(const esp_now_recv_info_t *recv_info, const uint8
 }
 
 // ==============================================================================
-// 5. Asynchronous Core 0 Streaming Task (Avoids Core 1 UI Stutter)
+// Asynchronous Core 0 Streaming Task (Decodes video in background)
 // ==============================================================================
 static void video_stream_processing_task(void *pvParameters) {
-    // 1. Allocate frame buffers inside PSRAM to protect internal SRAM
+    // 1. Allocate frame buffers inside PSRAM to preserve internal SRAM
     jpeg_assembly_buf = (uint8_t *)heap_caps_malloc(MAX_JPEG_SIZE, MALLOC_CAP_SPIRAM);
     decoded_rgb565_buf = (uint8_t *)heap_caps_malloc(320 * 240 * 2, MALLOC_CAP_SPIRAM);
 
@@ -191,9 +187,10 @@ static void video_stream_processing_task(void *pvParameters) {
 
                 // Thread-Safe display refresh: Lock BSP display mutex before updating LVGL [1]
                 if (bsp_display_lock(portMAX_DELAY)) {
-                    if (ui_image_cam != NULL) {
-                        lv_img_set_src(ui_image_cam, &dynamic_camera_dsc);
-                        lv_obj_invalidate(ui_image_cam); // Redraw
+                    // Directly target the EEZ Studio camera widget reference [1]
+                    if (objects.app_cam_icon != NULL) {
+                        lv_img_set_src(objects.app_cam_icon, &dynamic_camera_dsc);
+                        lv_obj_invalidate(objects.app_cam_icon); // Invalidate object to force refresh [1]
                     }
                     bsp_display_unlock();
                 }
@@ -205,7 +202,7 @@ static void video_stream_processing_task(void *pvParameters) {
 }
 
 // ==============================================================================
-// 6. Modified Streaming Wi-Fi Initialization
+// Streaming Wi-Fi Initialization
 // ==============================================================================
 static void init_streaming_wifi(void) {
     ESP_ERROR_CHECK(esp_netif_init());
@@ -221,7 +218,7 @@ static void init_streaming_wifi(void) {
 }
 
 // ==============================================================================
-// 7. Watch OS Entry Point
+// Watch OS Entry Point
 // ==============================================================================
 void app_main(void) {
     // 1. Initialize NVS
@@ -272,7 +269,7 @@ void app_main(void) {
     // 6. Delay and start background receiver Wi-Fi & processing tasks
     vTaskDelay(pdMS_TO_TICKS(1000));
     
-    // Instead of launching generic AP/STA connection, run the stream initialization
+    // Set up standard raw/ESP-NOW Wi-Fi state
     init_streaming_wifi();
     
     // Pin video decoding to Core 0 to leave Core 1 100% dedicated to display rendering [1]
