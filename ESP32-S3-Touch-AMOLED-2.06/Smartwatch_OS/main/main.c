@@ -4,7 +4,7 @@
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_now.h"
-#include "jpeg_decoder.h" // Hardware-accelerated ESP-IDF JPEG decoder
+#include "tjpgdec.h" // Standard built-in ESP-IDF JPEG decoder [1]
 #include <time.h>
 #include <sys/time.h>
 #include <string.h>
@@ -68,6 +68,42 @@ static lv_img_dsc_t dynamic_camera_dsc = {
     .data_size = 320 * 240 * 2,
     .data = NULL
 };
+
+// ==============================================================================
+// tjpgdec Callback Functions
+// ==============================================================================
+// Input callback: Reads bytes from the assembly buffer
+static unsigned int tjpgd_input_cb(JDEC* decoder, uint8_t* buf, unsigned int len) {
+    uint8_t **in_ptr = (uint8_t **)decoder->device;
+    if (buf) {
+        memcpy(buf, *in_ptr, len);
+    }
+    *in_ptr += len;
+    return len;
+}
+
+// Output callback: Maps decoded blocks to our RGB565 PSRAM display buffer
+static int tjpgd_output_cb(JDEC* decoder, void* bitmap, JRECT* rect) {
+    uint16_t *src = (uint16_t *)bitmap;
+    uint16_t *dst = (uint16_t *)decoded_rgb565_buf;
+    
+    int x_start = rect->left;
+    int x_end = rect->right;
+    int y_start = rect->top;
+    int y_end = rect->bottom;
+    
+    int width = x_end - x_start + 1;
+    int height = y_end - y_start + 1;
+    
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            int target_x = x_start + x;
+            int target_y = y_start + y;
+            dst[target_y * 320 + target_x] = src[y * width + x];
+        }
+    }
+    return 1;
+}
 
 // ==============================================================================
 // Wi-Fi Raw Packet Callback
@@ -136,24 +172,25 @@ static void on_esp_now_recv_cb(const esp_now_recv_info_t *recv_info, const uint8
 // Asynchronous Core 0 Streaming Task (Decodes video in background)
 // ==============================================================================
 static void video_stream_processing_task(void *pvParameters) {
-    // 1. Allocate frame buffers inside PSRAM to preserve internal SRAM
+    // Allocate frame buffers inside PSRAM to preserve internal SRAM
     jpeg_assembly_buf = (uint8_t *)heap_caps_malloc(MAX_JPEG_SIZE, MALLOC_CAP_SPIRAM);
     decoded_rgb565_buf = (uint8_t *)heap_caps_malloc(320 * 240 * 2, MALLOC_CAP_SPIRAM);
+    uint8_t *work_buf = (uint8_t *)malloc(3100); // Working pool for tjpgdec [1]
 
-    if (!jpeg_assembly_buf || !decoded_rgb565_buf) {
-        ESP_LOGE(NET_TAG, "Failed to allocate framebuffers in PSRAM");
+    if (!jpeg_assembly_buf || !decoded_rgb565_buf || !work_buf) {
+        ESP_LOGE(NET_TAG, "Failed to allocate framebuffers or workspace");
         vTaskDelete(NULL);
     }
 
     dynamic_camera_dsc.data = decoded_rgb565_buf;
 
-    // 2. Loop until pairing establishes
+    // Loop until pairing establishes
     ESP_LOGI(NET_TAG, "Listening for ESP-NOW Pairing Handshake...");
     while (!is_paired) {
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    // 3. Stop ESP-NOW and switch to Wi-Fi raw packet capture mode
+    // Stop ESP-NOW and switch to Wi-Fi raw packet capture mode
     esp_now_unregister_recv_cb();
     esp_now_deinit();
 
@@ -163,37 +200,31 @@ static void video_stream_processing_task(void *pvParameters) {
     esp_wifi_set_promiscuous(true);
     ESP_LOGI(NET_TAG, "Promiscuous mode enabled. Collecting frame chunks...");
 
-    // 4. Processing Loop
+    // Processing Loop
     while (1) {
         if (new_frame_ready) {
-            // Hardware-accelerated decoding using ESP-IDF native engine
-            jpeg_dec_config_t config = {
-                .output_type = JPEG_RAW_RGB565,
-                .rotate = JPEG_ROTATE_0
-            };
-            jpeg_dec_handle_t dec_handle = jpeg_dec_open(&config);
-            if (dec_handle != NULL) {
-                jpeg_dec_io_t io = {
-                    .in_buf = jpeg_assembly_buf,
-                    .in_buf_len = assembled_jpeg_len,
-                    .out_buf = decoded_rgb565_buf,
-                    .out_buf_len = 320 * 240 * 2
-                };
-                jpeg_dec_header_t header;
-                if (jpeg_dec_parse_header(dec_handle, &io, &header) == ESP_OK) {
-                    jpeg_dec_process(dec_handle, &io);
-                }
-                jpeg_dec_close(dec_handle);
+            JDEC decoder;
+            uint8_t *in_ptr = jpeg_assembly_buf;
 
-                // Thread-Safe display refresh: Lock BSP display mutex before updating LVGL [1]
-                if (bsp_display_lock(portMAX_DELAY)) {
-                    // Directly target the EEZ Studio camera widget reference [1]
-                    if (objects.app_cam_icon != NULL) {
-                        lv_img_set_src(objects.app_cam_icon, &dynamic_camera_dsc);
-                        lv_obj_invalidate(objects.app_cam_icon); // Invalidate object to force refresh [1]
+            // Prepare decompression using tjpgdec [1]
+            JRESULT res = jd_prepare(&decoder, tjpgd_input_cb, work_buf, 3100, &in_ptr);
+            if (res == JDR_OK) {
+                res = jd_decomp(&decoder, tjpgd_output_cb, 0); // 0 means 100% scale
+                
+                if (res == JDR_OK) {
+                    // Thread-Safe display refresh: Lock BSP display mutex before updating LVGL [1]
+                    if (bsp_display_lock(portMAX_DELAY)) {
+                        if (objects.app_cam_icon != NULL) {
+                            lv_img_set_src(objects.app_cam_icon, &dynamic_camera_dsc);
+                            lv_obj_invalidate(objects.app_cam_icon); // Redraw
+                        }
+                        bsp_display_unlock();
                     }
-                    bsp_display_unlock();
+                } else {
+                    ESP_LOGE(NET_TAG, "jd_decomp failed: %d", res);
                 }
+            } else {
+                ESP_LOGE(NET_TAG, "jd_prepare failed: %d", res);
             }
             new_frame_ready = false;
         }
