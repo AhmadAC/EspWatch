@@ -4,8 +4,8 @@
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_now.h"
-#include "esp_mac.h"      // Explicitly required for esp_read_mac in ESP-IDF v5+ [2]
-#include "jpeg_decoder.h" // Native hardware-accelerated ESP-IDF decoder [1]
+#include "esp_mac.h"        // Required for esp_read_mac in ESP-IDF v5+
+#include "esp_jpeg_dec.h"   // Correct Header for the espressif/esp_jpeg component
 #include <time.h>
 #include <sys/time.h>
 #include <string.h>
@@ -59,7 +59,7 @@ static uint16_t last_frame_id = 9999;
 static uint8_t robot_mac[6] = {0};
 static volatile bool is_paired = false;
 
-// Dynamic LVGL Image Descriptor pointing to our live-decoded camera feed [1]
+// Dynamic LVGL Image Descriptor pointing to our live-decoded camera feed
 static lv_img_dsc_t dynamic_camera_dsc = {
     .header.cf = LV_IMG_CF_TRUE_COLOR, // RGB565 format
     .header.always_zero = 0,
@@ -167,27 +167,27 @@ static void video_stream_processing_task(void *pvParameters) {
     // Processing Loop
     while (1) {
         if (new_frame_ready) {
-            // Hardware-accelerated decoding using ESP-IDF native engine
-            jpeg_dec_config_t config = {
-                .output_type = JPEG_RAW_RGB565,
-                .rotate = JPEG_ROTATE_0
-            };
+            // Hardware-accelerated decoding using exact esp_jpeg component API
+            jpeg_dec_config_t config = DEFAULT_JPEG_DEC_CONFIG();
+            config.output_type = JPEG_RAW_TYPE_RGB565_LE; // Common format for LVGL and ESP32 displays
+            
             jpeg_dec_handle_t dec_handle = jpeg_dec_open(&config);
             if (dec_handle != NULL) {
-                // Resolved: out_buf_len removed to match jpeg_dec_io_t definitions
+                
+                // Correct field names for esp_jpeg API
                 jpeg_dec_io_t io = {
-                    .in_buf = jpeg_assembly_buf,
-                    .in_buf_len = assembled_jpeg_len,
-                    .out_buf = decoded_rgb565_buf
+                    .inbuf = jpeg_assembly_buf,
+                    .inbuf_len = assembled_jpeg_len,
+                    .outbuf = decoded_rgb565_buf
                 };
-                // Resolved: Changed to jpeg_dec_info_t and jpeg_dec_parse_info / jpeg_dec_decode [1]
-                jpeg_dec_info_t info;
-                if (jpeg_dec_parse_info(dec_handle, &io, &info) == ESP_OK) {
-                    jpeg_dec_decode(dec_handle, &io);
+                
+                jpeg_dec_header_info_t header_info;
+                if (jpeg_dec_parse_header(dec_handle, &io, &header_info) == ESP_OK) {
+                    jpeg_dec_process(dec_handle, &io);
                 }
                 jpeg_dec_close(dec_handle);
 
-                // Thread-Safe display refresh: Lock BSP display mutex before updating LVGL [1]
+                // Thread-Safe display refresh: Lock BSP display mutex before updating LVGL
                 if (bsp_display_lock(portMAX_DELAY)) {
                     if (objects.app_cam_icon != NULL) {
                         lv_img_set_src(objects.app_cam_icon, &dynamic_camera_dsc);
@@ -273,6 +273,6 @@ void app_main(void) {
     // Set up standard raw/ESP-NOW Wi-Fi state
     init_streaming_wifi();
     
-    // Pin video decoding to Core 0 to leave Core 1 100% dedicated to display rendering [1]
+    // Pin video decoding to Core 0 to leave Core 1 100% dedicated to display rendering
     xTaskCreatePinnedToCore(video_stream_processing_task, "stream_task", 6144, NULL, 5, NULL, 0);
 }
