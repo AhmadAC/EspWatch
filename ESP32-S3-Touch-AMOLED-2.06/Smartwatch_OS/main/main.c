@@ -4,8 +4,8 @@
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_now.h"
-#include "esp_mac.h"        // Required for esp_read_mac in ESP-IDF v5+
-#include "esp_jpeg_dec.h"   // Correct Header for the espressif/esp_jpeg component
+#include "esp_mac.h"        
+#include "jpeg_decoder.h" // This now safely targets the esp_codec_dev library already in your project
 #include <time.h>
 #include <sys/time.h>
 #include <string.h>
@@ -22,7 +22,7 @@ static const char *NET_TAG = "Watch_Receiver";
 
 #define WIFI_CHANNEL 1
 #define PACKET_MAGIC 0xCAFEBABE
-#define MAX_JPEG_SIZE (64 * 1024) // 64KB limit for incoming stream frames
+#define MAX_JPEG_SIZE (64 * 1024) 
 #define CHUNK_SIZE 1000
 
 // ==============================================================================
@@ -59,13 +59,13 @@ static uint16_t last_frame_id = 9999;
 static uint8_t robot_mac[6] = {0};
 static volatile bool is_paired = false;
 
-// Dynamic LVGL Image Descriptor pointing to our live-decoded camera feed
+// Dynamic LVGL Image Descriptor
 static lv_img_dsc_t dynamic_camera_dsc = {
-    .header.cf = LV_IMG_CF_TRUE_COLOR, // RGB565 format
+    .header.cf = LV_IMG_CF_TRUE_COLOR,
     .header.always_zero = 0,
     .header.reserved = 0,
-    .header.w = 320,  // Match OV3660 camera width
-    .header.h = 240,  // Match OV3660 camera height
+    .header.w = 320,  
+    .header.h = 240,  
     .data_size = 320 * 240 * 2,
     .data = NULL
 };
@@ -137,7 +137,6 @@ static void on_esp_now_recv_cb(const esp_now_recv_info_t *recv_info, const uint8
 // Asynchronous Core 0 Streaming Task (Decodes video in background)
 // ==============================================================================
 static void video_stream_processing_task(void *pvParameters) {
-    // Allocate frame buffers inside PSRAM to preserve internal SRAM
     jpeg_assembly_buf = (uint8_t *)heap_caps_malloc(MAX_JPEG_SIZE, MALLOC_CAP_SPIRAM);
     decoded_rgb565_buf = (uint8_t *)heap_caps_malloc(320 * 240 * 2, MALLOC_CAP_SPIRAM);
 
@@ -148,13 +147,11 @@ static void video_stream_processing_task(void *pvParameters) {
 
     dynamic_camera_dsc.data = decoded_rgb565_buf;
 
-    // Loop until pairing establishes
     ESP_LOGI(NET_TAG, "Listening for ESP-NOW Pairing Handshake...");
     while (!is_paired) {
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    // Stop ESP-NOW and switch to Wi-Fi raw packet capture mode
     esp_now_unregister_recv_cb();
     esp_now_deinit();
 
@@ -164,17 +161,19 @@ static void video_stream_processing_task(void *pvParameters) {
     esp_wifi_set_promiscuous(true);
     ESP_LOGI(NET_TAG, "Promiscuous mode enabled. Collecting frame chunks...");
 
-    // Processing Loop
     while (1) {
         if (new_frame_ready) {
-            // Hardware-accelerated decoding using exact esp_jpeg component API
-            jpeg_dec_config_t config = DEFAULT_JPEG_DEC_CONFIG();
-            config.output_type = JPEG_RAW_TYPE_RGB565_LE; // Common format for LVGL and ESP32 displays
+            
+            // Explicitly define struct parameters for esp_codec_dev API
+            jpeg_dec_config_t config = {
+                .output_type = JPEG_RAW_TYPE_RGB565_LE,
+                .rotate = JPEG_ROTATE_0
+            };
             
             jpeg_dec_handle_t dec_handle = jpeg_dec_open(&config);
             if (dec_handle != NULL) {
                 
-                // Correct field names for esp_jpeg API
+                // Exact struct definition inside esp_codec_dev/include/jpeg_decoder.h
                 jpeg_dec_io_t io = {
                     .inbuf = jpeg_assembly_buf,
                     .inbuf_len = assembled_jpeg_len,
@@ -187,18 +186,18 @@ static void video_stream_processing_task(void *pvParameters) {
                 }
                 jpeg_dec_close(dec_handle);
 
-                // Thread-Safe display refresh: Lock BSP display mutex before updating LVGL
+                // Lock BSP display mutex before updating LVGL
                 if (bsp_display_lock(portMAX_DELAY)) {
                     if (objects.app_cam_icon != NULL) {
                         lv_img_set_src(objects.app_cam_icon, &dynamic_camera_dsc);
-                        lv_obj_invalidate(objects.app_cam_icon); // Redraw
+                        lv_obj_invalidate(objects.app_cam_icon);
                     }
                     bsp_display_unlock();
                 }
             }
             new_frame_ready = false;
         }
-        vTaskDelay(pdMS_TO_TICKS(10)); // Yield to prevent Core 0 watchdog triggers
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
@@ -222,7 +221,6 @@ static void init_streaming_wifi(void) {
 // Watch OS Entry Point
 // ==============================================================================
 void app_main(void) {
-    // 1. Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
       ESP_ERROR_CHECK(nvs_flash_erase());
@@ -230,7 +228,6 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(ret);
 
-    // 2. Init Time (Fallback to PDT)
     time_t now;
     time(&now);
     if (now < 1767225600) {
@@ -239,7 +236,6 @@ void app_main(void) {
         ESP_LOGI(TAG, "Initializing to fallback: Jun 8, 2026 15:51:00 PDT");
     }
 
-    // 3. Load Persistent Timezone
     nvs_handle_t my_handle;
     char saved_tz[32] = {0};
     if (nvs_open("smartwatch", NVS_READONLY, &my_handle) == ESP_OK) {
@@ -256,23 +252,18 @@ void app_main(void) {
     }
     tzset();
 
-    // 4. Init Screen and Display Hardware
     ESP_LOGI(TAG, "Initializing Board Support Package...");
     if (bsp_display_start() != NULL) {
         bsp_display_backlight_on();
     }
 
-    // 5. Build Graphic UI (1000ms timeout prevents hard FreeRTOS mutex crashes on boot)
     bsp_display_lock(1000);
     build_ui();
     bsp_display_unlock();
 
-    // 6. Delay and start background receiver Wi-Fi & processing tasks
     vTaskDelay(pdMS_TO_TICKS(1000));
     
-    // Set up standard raw/ESP-NOW Wi-Fi state
     init_streaming_wifi();
     
-    // Pin video decoding to Core 0 to leave Core 1 100% dedicated to display rendering
     xTaskCreatePinnedToCore(video_stream_processing_task, "stream_task", 6144, NULL, 5, NULL, 0);
 }
