@@ -8,4 +8,4 @@ idf_component_register(SRCS "main.c"
                             "file_explorer.c"
                             "../fonts/arial_160.c"
                     INCLUDE_DIRS "."
-                    REQUIRES esp_wifi nvs_flash esp_lvgl_port esp_timer esp_http_server wpa_supplicant my_eez_ui fatfs esp_jpeg) # <-- Changed to esp_jpeg
+                    REQUIRES esp_wifi nvs_flash esp_lvgl_port esp_timer esp_http_server wpa_supplicant my_eez_ui fatfs)
