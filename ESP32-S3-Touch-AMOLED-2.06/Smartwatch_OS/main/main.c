@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_now.h"
+#include "esp_mac.h"      // Explicitly required for esp_read_mac in ESP-IDF v5+ [2]
 #include "jpeg_decoder.h" // Native hardware-accelerated ESP-IDF decoder [1]
 #include <time.h>
 #include <sys/time.h>
@@ -173,15 +174,16 @@ static void video_stream_processing_task(void *pvParameters) {
             };
             jpeg_dec_handle_t dec_handle = jpeg_dec_open(&config);
             if (dec_handle != NULL) {
+                // Resolved: out_buf_len removed to match jpeg_dec_io_t definitions
                 jpeg_dec_io_t io = {
                     .in_buf = jpeg_assembly_buf,
                     .in_buf_len = assembled_jpeg_len,
-                    .out_buf = decoded_rgb565_buf,
-                    .out_buf_len = 320 * 240 * 2
+                    .out_buf = decoded_rgb565_buf
                 };
-                jpeg_dec_header_t header;
-                if (jpeg_dec_parse_header(dec_handle, &io, &header) == ESP_OK) {
-                    jpeg_dec_process(dec_handle, &io);
+                // Resolved: Changed to jpeg_dec_info_t and jpeg_dec_parse_info / jpeg_dec_decode [1]
+                jpeg_dec_info_t info;
+                if (jpeg_dec_parse_info(dec_handle, &io, &info) == ESP_OK) {
+                    jpeg_dec_decode(dec_handle, &io);
                 }
                 jpeg_dec_close(dec_handle);
 
