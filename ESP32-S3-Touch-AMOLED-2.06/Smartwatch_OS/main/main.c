@@ -4,8 +4,8 @@
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_now.h"
-#include "esp_mac.h"        
-#include "jpeg_decoder.h" // This now safely targets the esp_codec_dev library already in your project
+#include "esp_mac.h"
+#include "lvgl.h"      // Rely exclusively on LVGL 9's native JPEG decoder
 #include <time.h>
 #include <sys/time.h>
 #include <string.h>
@@ -13,8 +13,6 @@
 #include "bsp/esp-bsp.h"
 #include "ui_app.h"
 #include "wifi_app.h"
-
-// Include your EEZ Studio generated screen headers to access the global "objects" struct
 #include "screens.h"
 
 static const char *TAG = "SmartwatchOS";
@@ -50,8 +48,10 @@ typedef struct {
     uint8_t mac_addr[6];
 } __attribute__((packed)) pairing_packet_t;
 
-static uint8_t *jpeg_assembly_buf = NULL;
-static uint8_t *decoded_rgb565_buf = NULL; 
+// Double buffering to prevent display corruption while downloading the next frame
+static uint8_t *jpeg_rx_buf = NULL;      
+static uint8_t *jpeg_display_buf = NULL; 
+
 static volatile uint32_t assembled_jpeg_len = 0;
 static volatile bool new_frame_ready = false;
 static uint16_t last_frame_id = 9999;
@@ -59,16 +59,8 @@ static uint16_t last_frame_id = 9999;
 static uint8_t robot_mac[6] = {0};
 static volatile bool is_paired = false;
 
-// Dynamic LVGL Image Descriptor
-static lv_img_dsc_t dynamic_camera_dsc = {
-    .header.cf = LV_IMG_CF_TRUE_COLOR,
-    .header.always_zero = 0,
-    .header.reserved = 0,
-    .header.w = 320,  
-    .header.h = 240,  
-    .data_size = 320 * 240 * 2,
-    .data = NULL
-};
+// LVGL 9 Dynamic Image Descriptor for RAW JPEG data
+static lv_image_dsc_t dynamic_camera_dsc = {0};
 
 // ==============================================================================
 // Wi-Fi Raw Packet Callback
@@ -96,10 +88,15 @@ static void wifi_promiscuous_rx_callback(void* buf, wifi_promiscuous_pkt_type_t 
 
         uint32_t offset = stream_hdr->chunk_idx * CHUNK_SIZE;
         if (offset + stream_hdr->length < MAX_JPEG_SIZE) {
-            memcpy(jpeg_assembly_buf + offset, chunk_data, stream_hdr->length);
+            
+            // Assemble incoming chunks into the RX buffer
+            memcpy(jpeg_rx_buf + offset, chunk_data, stream_hdr->length);
             
             if (stream_hdr->chunk_idx == stream_hdr->total_chunks - 1) {
                 assembled_jpeg_len = offset + stream_hdr->length;
+                
+                // Securely copy to display buffer before LVGL reads it
+                memcpy(jpeg_display_buf, jpeg_rx_buf, assembled_jpeg_len);
                 new_frame_ready = true;
             }
         }
@@ -134,18 +131,23 @@ static void on_esp_now_recv_cb(const esp_now_recv_info_t *recv_info, const uint8
 }
 
 // ==============================================================================
-// Asynchronous Core 0 Streaming Task (Decodes video in background)
+// Asynchronous Core 0 Streaming Task (Updates LVGL safely)
 // ==============================================================================
 static void video_stream_processing_task(void *pvParameters) {
-    jpeg_assembly_buf = (uint8_t *)heap_caps_malloc(MAX_JPEG_SIZE, MALLOC_CAP_SPIRAM);
-    decoded_rgb565_buf = (uint8_t *)heap_caps_malloc(320 * 240 * 2, MALLOC_CAP_SPIRAM);
+    // Allocate dual frame buffers in PSRAM
+    jpeg_rx_buf = (uint8_t *)heap_caps_malloc(MAX_JPEG_SIZE, MALLOC_CAP_SPIRAM);
+    jpeg_display_buf = (uint8_t *)heap_caps_malloc(MAX_JPEG_SIZE, MALLOC_CAP_SPIRAM);
 
-    if (!jpeg_assembly_buf || !decoded_rgb565_buf) {
-        ESP_LOGE(NET_TAG, "Failed to allocate framebuffers in PSRAM");
+    if (!jpeg_rx_buf || !jpeg_display_buf) {
+        ESP_LOGE(NET_TAG, "Failed to allocate PSRAM buffers!");
         vTaskDelete(NULL);
     }
 
-    dynamic_camera_dsc.data = decoded_rgb565_buf;
+    // Configure LVGL 9 image descriptor for RAW compressed data
+    dynamic_camera_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+    dynamic_camera_dsc.header.cf = LV_COLOR_FORMAT_RAW; // Tells LVGL to decode this JPEG stream
+    dynamic_camera_dsc.header.w = 320;
+    dynamic_camera_dsc.header.h = 240;
 
     ESP_LOGI(NET_TAG, "Listening for ESP-NOW Pairing Handshake...");
     while (!is_paired) {
@@ -163,37 +165,17 @@ static void video_stream_processing_task(void *pvParameters) {
 
     while (1) {
         if (new_frame_ready) {
-            
-            // Explicitly define struct parameters for esp_codec_dev API
-            jpeg_dec_config_t config = {
-                .output_type = JPEG_RAW_TYPE_RGB565_LE,
-                .rotate = JPEG_ROTATE_0
-            };
-            
-            jpeg_dec_handle_t dec_handle = jpeg_dec_open(&config);
-            if (dec_handle != NULL) {
-                
-                // Exact struct definition inside esp_codec_dev/include/jpeg_decoder.h
-                jpeg_dec_io_t io = {
-                    .inbuf = jpeg_assembly_buf,
-                    .inbuf_len = assembled_jpeg_len,
-                    .outbuf = decoded_rgb565_buf
-                };
-                
-                jpeg_dec_header_info_t header_info;
-                if (jpeg_dec_parse_header(dec_handle, &io, &header_info) == ESP_OK) {
-                    jpeg_dec_process(dec_handle, &io);
+            if (bsp_display_lock(portMAX_DELAY)) {
+                if (objects.app_cam_icon != NULL) {
+                    
+                    // Bind the raw JPEG array directly to LVGL
+                    dynamic_camera_dsc.data = jpeg_display_buf;
+                    dynamic_camera_dsc.data_size = assembled_jpeg_len;
+                    
+                    // Force UI update
+                    lv_image_set_src(objects.app_cam_icon, &dynamic_camera_dsc);
                 }
-                jpeg_dec_close(dec_handle);
-
-                // Lock BSP display mutex before updating LVGL
-                if (bsp_display_lock(portMAX_DELAY)) {
-                    if (objects.app_cam_icon != NULL) {
-                        lv_img_set_src(objects.app_cam_icon, &dynamic_camera_dsc);
-                        lv_obj_invalidate(objects.app_cam_icon);
-                    }
-                    bsp_display_unlock();
-                }
+                bsp_display_unlock();
             }
             new_frame_ready = false;
         }
@@ -265,5 +247,6 @@ void app_main(void) {
     
     init_streaming_wifi();
     
+    // Background task collects packets, double buffers them, and pushes them to LVGL
     xTaskCreatePinnedToCore(video_stream_processing_task, "stream_task", 6144, NULL, 5, NULL, 0);
 }
