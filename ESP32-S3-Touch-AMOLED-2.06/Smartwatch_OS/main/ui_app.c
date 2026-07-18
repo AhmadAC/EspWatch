@@ -109,10 +109,6 @@ static void btn_back_tools_cb(lv_event_t * e) {
     lv_obj_set_tile(tv, tile_launcher, LV_ANIM_ON);
 }
 
-static void btn_capture_cb(lv_event_t * e) {
-    save_photo_to_sd();
-}
-
 static void tile_click_cb(lv_event_t * e) {
     lv_obj_set_tile(tv, tile_launcher, LV_ANIM_ON);
 }
@@ -175,6 +171,10 @@ static void btn_ap_mode_cb(lv_event_t * e) {
     lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_20, 0);
     lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 15);
+}
+
+static void btn_capture_cb(lv_event_t * e) {
+    save_photo_to_sd();
 }
 
 static void hardware_poll_timer_cb(lv_timer_t * timer) {
@@ -308,7 +308,7 @@ void build_ui(void) {
     lv_obj_set_style_text_color(scr, lv_color_white(), 0);
     
     tv = lv_tileview_create(scr);
-    lv_obj_remove_flag(tv, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(tv, LCD_H_RES, LCD_V_RES);
     lv_obj_set_scrollbar_mode(tv, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_bg_color(tv, lv_color_black(), 0);
     
